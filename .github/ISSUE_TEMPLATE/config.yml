@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: ATP Datatracker entry
+    url: https://datatracker.ietf.org/doc/draft-bates-atp/
+    about: View the currently posted ATP Internet-Draft
+  - name: ATP Test Vectors Datatracker entry
+    url: https://datatracker.ietf.org/doc/draft-bates-atp-test-vectors/
+    about: View the currently posted ATP Core Test Vectors draft
