@@ -1,0 +1,708 @@
+{
+  "title": "ATP Core Test Vectors (machine-readable)",
+  "source": "draft-bates-atp-test-vectors-00; entries marked proposed-01 are candidates for draft-bates-atp-test-vectors-01",
+  "conventions": {
+    "canonicalization": "ATP §9 null-member omission (recursive) followed by RFC 8785 JCS",
+    "nodeId": "lowercase hex SHA-256 of canonical UTF-8 bytes, nodeId and signature removed first",
+    "signatureMessage": "32 raw bytes of nodeId (bytes.fromhex(nodeId)), not the hex string",
+    "signatureEncoding": "base64 (RFC 4648 §4, standard alphabet, padded)",
+    "payloadHashFormat": "\"sha256:\" + 64 lowercase hex chars (as used by -00 vectors)",
+    "validationResult": "§13.6 keys; \"lineageIncomplete\" is an implementation extension proposed for -01"
+  },
+  "keys": {
+    "test-key-1": {
+      "status": "published-00",
+      "issuerId": "test-issuer",
+      "seedHex": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "publicKeyHex": "e734ea6c2b6257de72355e472aa05a4c487e6b463c029ed306df2f01b5636b58",
+      "publicKeyBase64": "5zTqbCtiV95yNV5HKqBaTEh+a0Y8Ap7TBt8vAbVja1g="
+    },
+    "test-key-2": {
+      "status": "proposed-01",
+      "issuerId": "test-issuer-2",
+      "seedHex": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "publicKeyHex": "7d59c5623dd40a74aa4d5a32ac645d3b3f95daeae4c22be25476dd6a486f7382",
+      "publicKeyBase64": "fVnFYj3UCnSqTVoyrGRdOz+V2urkwiviVHbdakhvc4I="
+    }
+  },
+  "canonicalization": [
+    {
+      "id": "C1",
+      "status": "published-00",
+      "description": "empty object",
+      "inputJson": "{}",
+      "canonical": "{}",
+      "canonicalHex": "7b7d",
+      "length": 2
+    },
+    {
+      "id": "C2",
+      "status": "published-00",
+      "description": "object key reordering",
+      "inputJson": "{\"b\": 1, \"a\": 2}",
+      "canonical": "{\"a\":2,\"b\":1}",
+      "canonicalHex": "7b2261223a322c2262223a317d",
+      "length": 13
+    },
+    {
+      "id": "C3",
+      "status": "published-00",
+      "description": "null-valued field omission per ATP §9",
+      "inputJson": "{\"a\": 1, \"b\": null}",
+      "canonical": "{\"a\":1}",
+      "canonicalHex": "7b2261223a317d",
+      "length": 7
+    },
+    {
+      "id": "C4",
+      "status": "published-00",
+      "description": "array order preservation",
+      "inputJson": "{\"items\": [3, 1, 2]}",
+      "canonical": "{\"items\":[3,1,2]}",
+      "canonicalHex": "7b226974656d73223a5b332c312c325d7d",
+      "length": 17
+    },
+    {
+      "id": "C5",
+      "status": "published-00",
+      "description": "nested object key sorting",
+      "inputJson": "{\"outer\": {\"z\": 1, \"a\": 2}, \"alpha\": 3}",
+      "canonical": "{\"alpha\":3,\"outer\":{\"a\":2,\"z\":1}}",
+      "canonicalHex": "7b22616c706861223a332c226f75746572223a7b2261223a322c227a223a317d7d",
+      "length": 33
+    },
+    {
+      "id": "C6",
+      "status": "proposed-01",
+      "description": "nested null omission (recursive §9 interpretation)",
+      "inputJson": "{\"a\": {\"b\": null, \"c\": 1}}",
+      "canonical": "{\"a\":{\"c\":1}}",
+      "canonicalHex": "7b2261223a7b2263223a317d7d",
+      "length": 13
+    },
+    {
+      "id": "C7",
+      "status": "proposed-01",
+      "description": "string escaping: non-ASCII raw, control chars \\u00XX, DEL raw",
+      "inputJson": "{\"s\": \"\\u00e9\\n\\\"\\\\\\u0001\\u007f\"}",
+      "canonical": "{\"s\":\"é\\n\\\"\\\\\\u0001\"}",
+      "canonicalHex": "7b2273223a22c3a95c6e5c225c5c5c75303030317f227d",
+      "length": 23
+    },
+    {
+      "id": "C8",
+      "status": "proposed-01",
+      "description": "key sort by UTF-16 code units (differs from code-point order)",
+      "inputJson": "{\"\\uff61\": 1, \"\\ud83d\\ude00\": 2, \"a\": 3}",
+      "canonical": "{\"a\":3,\"😀\":2,\"｡\":1}",
+      "canonicalHex": "7b2261223a332c22f09f9880223a322c22efbda1223a317d",
+      "length": 24
+    },
+    {
+      "id": "C9",
+      "status": "proposed-01",
+      "description": "ECMAScript number serialization",
+      "inputJson": "{\"n\": [1e21, 1e-7, 0.1, -0, 100, 1.5e300, 123456789012345680000, 4.50]}",
+      "canonical": "{\"n\":[1e+21,1e-7,0.1,0,100,1.5e+300,123456789012345680000,4.5]}",
+      "canonicalHex": "7b226e223a5b31652b32312c31652d372c302e312c302c3130302c312e35652b3330302c3132333435363738393031323334353638303030302c342e355d7d",
+      "length": 63
+    },
+    {
+      "id": "C10",
+      "status": "proposed-01",
+      "description": "empty string, empty array, empty object values",
+      "inputJson": "{\"c\": {}, \"b\": [], \"a\": \"\"}",
+      "canonical": "{\"a\":\"\",\"b\":[],\"c\":{}}",
+      "canonicalHex": "7b2261223a22222c2262223a5b5d2c2263223a7b7d7d",
+      "length": 22
+    }
+  ],
+  "nodeId": [
+    {
+      "id": "V1",
+      "status": "published-00",
+      "description": "minimum-viable request node",
+      "inputJson": "{\"timestamp\":\"2026-01-01T00:00:00Z\",\"scope\":\"test-scope-001\",\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"action\":{\"type\":\"atp:request\",\"inputHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"},\"parents\":[]}",
+      "canonical": "{\"action\":{\"inputHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"type\":\"atp:request\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"parents\":[],\"scope\":\"test-scope-001\",\"timestamp\":\"2026-01-01T00:00:00Z\"}",
+      "nodeId": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+    },
+    {
+      "id": "V2",
+      "status": "published-00",
+      "description": "completion node with actor and parent reference",
+      "inputJson": "{\"timestamp\":\"2026-01-01T00:00:01Z\",\"scope\":\"test-scope-001\",\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"actor\":{\"actorId\":\"psn:0000-test-actor\",\"authContext\":\"test:none\"},\"action\":{\"type\":\"atp:completion\",\"inputHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"outputHash\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\"},\"parents\":[\"77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70\"]}",
+      "canonical": "{\"action\":{\"inputHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"outputHash\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"type\":\"atp:completion\"},\"actor\":{\"actorId\":\"psn:0000-test-actor\",\"authContext\":\"test:none\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"parents\":[\"77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70\"],\"scope\":\"test-scope-001\",\"timestamp\":\"2026-01-01T00:00:01Z\"}",
+      "nodeId": "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
+    },
+    {
+      "id": "V3",
+      "status": "published-00",
+      "description": "same content as V1 with mis-ordered keys",
+      "inputJson": "{\"scope\": \"test-scope-001\", \"agent\": {\"version\": \"1.0.0\", \"agentId\": \"test-agent\"}, \"action\": {\"inputHash\": \"sha256:0000000000000000000000000000000000000000000000000000000000000000\", \"type\": \"atp:request\"}, \"issuer\": {\"keyId\": \"test-key-1\", \"issuerId\": \"test-issuer\"}, \"timestamp\": \"2026-01-01T00:00:00Z\", \"parents\": []}",
+      "canonical": "{\"action\":{\"inputHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"type\":\"atp:request\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"parents\":[],\"scope\":\"test-scope-001\",\"timestamp\":\"2026-01-01T00:00:00Z\"}",
+      "nodeId": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+    },
+    {
+      "id": "V4",
+      "status": "published-00",
+      "description": "fan-in decision with two parents",
+      "inputJson": "{\"timestamp\":\"2026-01-01T00:00:02Z\",\"scope\":\"test-scope-001\",\"issuer\":{\"issuerId\":\"test-issuer-2\",\"keyId\":\"test-key-2\"},\"agent\":{\"agentId\":\"synth-agent\",\"version\":\"1.0.0\"},\"action\":{\"type\":\"atp:decision\",\"inputHash\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"outputHash\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\"},\"parents\":[\"77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70\",\"881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e\"]}",
+      "canonical": "{\"action\":{\"inputHash\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"outputHash\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"type\":\"atp:decision\"},\"agent\":{\"agentId\":\"synth-agent\",\"version\":\"1.0.0\"},\"issuer\":{\"issuerId\":\"test-issuer-2\",\"keyId\":\"test-key-2\"},\"parents\":[\"77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70\",\"881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e\"],\"scope\":\"test-scope-001\",\"timestamp\":\"2026-01-01T00:00:02Z\"}",
+      "nodeId": "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+    },
+    {
+      "id": "V5",
+      "status": "published-00",
+      "description": "node with profile field",
+      "inputJson": "{\"timestamp\":\"2026-01-01T00:00:03Z\",\"scope\":\"test-scope-001\",\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"action\":{\"type\":\"atp:request\",\"inputHash\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\"},\"parents\":[],\"profile\":\"urn:ietf:params:atp:profile:test:1.0\"}",
+      "canonical": "{\"action\":{\"inputHash\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\",\"type\":\"atp:request\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"parents\":[],\"profile\":\"urn:ietf:params:atp:profile:test:1.0\",\"scope\":\"test-scope-001\",\"timestamp\":\"2026-01-01T00:00:03Z\"}",
+      "nodeId": "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803"
+    },
+    {
+      "id": "V6",
+      "status": "proposed-01",
+      "description": "V1 with nodeId and signature present: both MUST be stripped (§10.1)",
+      "inputJson": "{\"nodeId\":\"77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70\",\"timestamp\":\"2026-01-01T00:00:00Z\",\"scope\":\"test-scope-001\",\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"action\":{\"type\":\"atp:request\",\"inputHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"},\"parents\":[],\"signature\":\"P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ==\"}",
+      "canonical": "{\"action\":{\"inputHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"type\":\"atp:request\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"parents\":[],\"scope\":\"test-scope-001\",\"timestamp\":\"2026-01-01T00:00:00Z\"}",
+      "nodeId": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+    },
+    {
+      "id": "V7",
+      "status": "proposed-01",
+      "description": "V4 with parent order reversed: different nodeId (§8)",
+      "inputJson": "{\"timestamp\":\"2026-01-01T00:00:02Z\",\"scope\":\"test-scope-001\",\"issuer\":{\"issuerId\":\"test-issuer-2\",\"keyId\":\"test-key-2\"},\"agent\":{\"agentId\":\"synth-agent\",\"version\":\"1.0.0\"},\"action\":{\"type\":\"atp:decision\",\"inputHash\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"outputHash\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\"},\"parents\":[\"881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e\",\"77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70\"]}",
+      "canonical": "{\"action\":{\"inputHash\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"outputHash\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"type\":\"atp:decision\"},\"agent\":{\"agentId\":\"synth-agent\",\"version\":\"1.0.0\"},\"issuer\":{\"issuerId\":\"test-issuer-2\",\"keyId\":\"test-key-2\"},\"parents\":[\"881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e\",\"77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70\"],\"scope\":\"test-scope-001\",\"timestamp\":\"2026-01-01T00:00:02Z\"}",
+      "nodeId": "d479106f88b53f55793c1abaa61fbeab31c090b3173b1cb20faa0e1763446729"
+    },
+    {
+      "id": "V8",
+      "status": "proposed-01",
+      "description": "V1 with timestamp \"+00:00\" instead of \"Z\": same instant, different nodeId",
+      "inputJson": "{\"timestamp\":\"2026-01-01T00:00:00+00:00\",\"scope\":\"test-scope-001\",\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"action\":{\"type\":\"atp:request\",\"inputHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\"},\"parents\":[]}",
+      "canonical": "{\"action\":{\"inputHash\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"type\":\"atp:request\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"parents\":[],\"scope\":\"test-scope-001\",\"timestamp\":\"2026-01-01T00:00:00+00:00\"}",
+      "nodeId": "4b4595dee68f8fe0141ec1280c98f58c9e8d3ad70d600acbff8d08ed7ee6904c"
+    }
+  ],
+  "signatures": [
+    {
+      "id": "S1",
+      "status": "published-00",
+      "description": "sign V1's nodeId (32 raw bytes)",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureHex": "3f4d9fb756aba9bca11cfac15d65d82441dbf6f69adc9ba527b506c3379855500a2ef1a4e471323f2e8c8d190868e4f5ef303bef1e3e57e1988b1b46d83d5509",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ=="
+    },
+    {
+      "id": "S2",
+      "status": "proposed-01",
+      "description": "sign V2's nodeId",
+      "key": "test-key-1",
+      "messageNodeIdHex": "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e",
+      "signatureHex": "e20f966eff53c78144a35d0930a945eac5a901830809ca544e2a001930964b0833c740e345807ec882c262ab456c425b504414f21acbd408445975dd1008db0c",
+      "signatureBase64": "4g+Wbv9Tx4FEo10JMKlF6sWpAYMICcpUTioAGTCWSwgzx0DjRYB+yILCYqtFbEJbUEQU8hrL1AhEWXXdEAjbDA=="
+    },
+    {
+      "id": "S3",
+      "status": "proposed-01",
+      "description": "sign V4's nodeId with test-key-2",
+      "key": "test-key-2",
+      "messageNodeIdHex": "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c",
+      "signatureHex": "e8e02dcdb8642201c5ed05d5f4425106441b5b88617c91416e9d00807b6ccd6b0bce4efa958e1d1848789d0fd82506044eb86bf90eb38776b2e1cfb1c925dc0c",
+      "signatureBase64": "6OAtzbhkIgHF7QXV9EJRBkQbW4hhfJFBbp0AgHtszWsLzk76lY4dGEh4nQ/YJQYETrhr+Q6zh3ay4c+xySXcDA=="
+    },
+    {
+      "id": "S4",
+      "status": "proposed-01",
+      "description": "sign V5's nodeId",
+      "key": "test-key-1",
+      "messageNodeIdHex": "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803",
+      "signatureHex": "94b69d6b065d72dc0fc1745b4f9b4bd01bcdbb6aa732c8e2e4fda2709a814be55e287a5ebee55179fc3254bc220416dff28273d3df1110c17c550f3755c2dc07",
+      "signatureBase64": "lLadawZdctwPwXRbT5tL0BvNu2qnMsji5P2icJqBS+VeKHpevuVRefwyVLwiBBbf8oJz098REMF8VQ83VcLcBw=="
+    }
+  ],
+  "negative": [
+    {
+      "id": "N1",
+      "status": "proposed-01",
+      "description": "signature computed over the 64-char hex STRING of V1 nodeId instead of its 32 raw bytes; MUST fail verification",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "dI0MYM4cOzPJ4EUC6ryaWTqUOes60N2JsmVNExQp2dIlxdYU0CtulaofnzPQklf73Fs+DtmixrEqY/u/ZkP+Cw==",
+      "expectVerify": false
+    },
+    {
+      "id": "N2",
+      "status": "proposed-01",
+      "description": "S1 with first signature byte flipped; MUST fail verification",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "Pk2ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ==",
+      "expectVerify": false
+    },
+    {
+      "id": "N3",
+      "status": "proposed-01",
+      "description": "S3 (signed with test-key-2) verified against test-key-1; MUST fail",
+      "key": "test-key-1",
+      "messageNodeIdHex": "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c",
+      "signatureBase64": "6OAtzbhkIgHF7QXV9EJRBkQbW4hhfJFBbp0AgHtszWsLzk76lY4dGEh4nQ/YJQYETrhr+Q6zh3ay4c+xySXcDA==",
+      "expectVerify": false
+    },
+    {
+      "id": "N4",
+      "status": "proposed-01",
+      "description": "valid S1 signature, message nodeId with last nibble altered; MUST fail",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce71",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ==",
+      "expectVerify": false
+    }
+  ],
+  "signedNodes": {
+    "V1": {
+      "nodeId": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "timestamp": "2026-01-01T00:00:00Z",
+      "scope": "test-scope-001",
+      "issuer": {
+        "issuerId": "test-issuer",
+        "keyId": "test-key-1"
+      },
+      "agent": {
+        "agentId": "test-agent",
+        "version": "1.0.0"
+      },
+      "action": {
+        "type": "atp:request",
+        "inputHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "parents": [],
+      "signature": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ=="
+    },
+    "V2": {
+      "nodeId": "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e",
+      "timestamp": "2026-01-01T00:00:01Z",
+      "scope": "test-scope-001",
+      "issuer": {
+        "issuerId": "test-issuer",
+        "keyId": "test-key-1"
+      },
+      "agent": {
+        "agentId": "test-agent",
+        "version": "1.0.0"
+      },
+      "actor": {
+        "actorId": "psn:0000-test-actor",
+        "authContext": "test:none"
+      },
+      "action": {
+        "type": "atp:completion",
+        "inputHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "outputHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "parents": [
+        "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+      ],
+      "signature": "4g+Wbv9Tx4FEo10JMKlF6sWpAYMICcpUTioAGTCWSwgzx0DjRYB+yILCYqtFbEJbUEQU8hrL1AhEWXXdEAjbDA=="
+    },
+    "V4": {
+      "nodeId": "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c",
+      "timestamp": "2026-01-01T00:00:02Z",
+      "scope": "test-scope-001",
+      "issuer": {
+        "issuerId": "test-issuer-2",
+        "keyId": "test-key-2"
+      },
+      "agent": {
+        "agentId": "synth-agent",
+        "version": "1.0.0"
+      },
+      "action": {
+        "type": "atp:decision",
+        "inputHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "outputHash": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "parents": [
+        "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+        "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
+      ],
+      "signature": "6OAtzbhkIgHF7QXV9EJRBkQbW4hhfJFBbp0AgHtszWsLzk76lY4dGEh4nQ/YJQYETrhr+Q6zh3ay4c+xySXcDA=="
+    },
+    "V5": {
+      "nodeId": "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803",
+      "timestamp": "2026-01-01T00:00:03Z",
+      "scope": "test-scope-001",
+      "issuer": {
+        "issuerId": "test-issuer",
+        "keyId": "test-key-1"
+      },
+      "agent": {
+        "agentId": "test-agent",
+        "version": "1.0.0"
+      },
+      "action": {
+        "type": "atp:request",
+        "inputHash": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "parents": [],
+      "profile": "urn:ietf:params:atp:profile:test:1.0",
+      "signature": "lLadawZdctwPwXRbT5tL0BvNu2qnMsji5P2icJqBS+VeKHpevuVRefwyVLwiBBbf8oJz098REMF8VQ83VcLcBw=="
+    },
+    "V2-tampered": {
+      "nodeId": "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e",
+      "timestamp": "2026-01-01T00:00:01Z",
+      "scope": "test-scope-001",
+      "issuer": {
+        "issuerId": "test-issuer",
+        "keyId": "test-key-1"
+      },
+      "agent": {
+        "agentId": "test-agent",
+        "version": "1.0.0"
+      },
+      "actor": {
+        "actorId": "psn:0000-test-actor",
+        "authContext": "test:none"
+      },
+      "action": {
+        "type": "atp:completion",
+        "inputHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "outputHash": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "parents": [
+        "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+      ],
+      "signature": "4g+Wbv9Tx4FEo10JMKlF6sWpAYMICcpUTioAGTCWSwgzx0DjRYB+yILCYqtFbEJbUEQU8hrL1AhEWXXdEAjbDA=="
+    }
+  },
+  "validation": [
+    {
+      "status": "proposed-01",
+      "id": "R1",
+      "description": "full recursive validation of V4 with all heritage and keys",
+      "mode": "full",
+      "targets": [
+        "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+      ],
+      "nodes": [
+        "V1",
+        "V2",
+        "V4"
+      ],
+      "keys": [
+        "test-key-1",
+        "test-key-2"
+      ],
+      "expected": {
+        "verified": [
+          "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c",
+          "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+          "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
+        ],
+        "invalid": [],
+        "unresolved": [],
+        "withheld": [],
+        "outOfHorizon": [],
+        "keyUnresolved": [],
+        "profileUnresolved": []
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R2",
+      "description": "tip validation of V4 alone: parents are not resolved",
+      "mode": "tip",
+      "targets": [
+        "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+      ],
+      "nodes": [
+        "V4"
+      ],
+      "keys": [
+        "test-key-2"
+      ],
+      "expected": {
+        "verified": [
+          "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+        ],
+        "invalid": [],
+        "unresolved": [],
+        "withheld": [],
+        "outOfHorizon": [],
+        "keyUnresolved": [],
+        "profileUnresolved": []
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R3",
+      "description": "full validation with V1 absent: V1 unresolved, V2 and V4 lineage not established",
+      "mode": "full",
+      "targets": [
+        "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+      ],
+      "nodes": [
+        "V2",
+        "V4"
+      ],
+      "keys": [
+        "test-key-1",
+        "test-key-2"
+      ],
+      "expected": {
+        "verified": [],
+        "invalid": [],
+        "unresolved": [
+          "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+        ],
+        "withheld": [],
+        "outOfHorizon": [],
+        "keyUnresolved": [],
+        "profileUnresolved": []
+      },
+      "expectedExtension": {
+        "lineageIncomplete": [
+          "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c",
+          "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
+        ]
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R4",
+      "description": "redacted-lineage validation with V1 declared withheld: gap reported, visible nodes verified",
+      "mode": "redacted",
+      "targets": [
+        "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+      ],
+      "nodes": [
+        "V2",
+        "V4"
+      ],
+      "withheld": [
+        "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+      ],
+      "keys": [
+        "test-key-1",
+        "test-key-2"
+      ],
+      "expected": {
+        "verified": [
+          "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c",
+          "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
+        ],
+        "invalid": [],
+        "unresolved": [],
+        "withheld": [
+          "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+        ],
+        "outOfHorizon": [],
+        "keyUnresolved": [],
+        "profileUnresolved": []
+      },
+      "expectedExtension": {
+        "lineageIncomplete": []
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R10",
+      "description": "full validation with V1 declared withheld and absent: withheld, lineage not established",
+      "mode": "full",
+      "targets": [
+        "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+      ],
+      "nodes": [
+        "V2",
+        "V4"
+      ],
+      "withheld": [
+        "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+      ],
+      "keys": [
+        "test-key-1",
+        "test-key-2"
+      ],
+      "expected": {
+        "verified": [],
+        "invalid": [],
+        "unresolved": [],
+        "withheld": [
+          "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+        ],
+        "outOfHorizon": [],
+        "keyUnresolved": [],
+        "profileUnresolved": []
+      },
+      "expectedExtension": {
+        "lineageIncomplete": [
+          "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c",
+          "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
+        ]
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R5",
+      "description": "full validation without test-key-2: V4 keyUnresolved (not invalid)",
+      "mode": "full",
+      "targets": [
+        "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+      ],
+      "nodes": [
+        "V1",
+        "V2",
+        "V4"
+      ],
+      "keys": [
+        "test-key-1"
+      ],
+      "expected": {
+        "verified": [
+          "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+          "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
+        ],
+        "invalid": [],
+        "unresolved": [],
+        "withheld": [],
+        "outOfHorizon": [],
+        "keyUnresolved": [
+          "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+        ],
+        "profileUnresolved": []
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R6",
+      "description": "bounded validation, depth 0: parents reported outOfHorizon",
+      "mode": "bounded",
+      "boundary": {
+        "depth": 0
+      },
+      "targets": [
+        "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+      ],
+      "nodes": [
+        "V1",
+        "V2",
+        "V4"
+      ],
+      "keys": [
+        "test-key-1",
+        "test-key-2"
+      ],
+      "expected": {
+        "verified": [
+          "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+        ],
+        "invalid": [],
+        "unresolved": [],
+        "withheld": [],
+        "outOfHorizon": [
+          "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+          "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
+        ],
+        "keyUnresolved": [],
+        "profileUnresolved": [],
+        "boundary": {
+          "depth": 0
+        }
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R7",
+      "description": "full validation with V2 tampered after signing (outputHash changed)",
+      "mode": "full",
+      "targets": [
+        "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+      ],
+      "nodes": [
+        "V1",
+        "V2-tampered",
+        "V4"
+      ],
+      "keys": [
+        "test-key-1",
+        "test-key-2"
+      ],
+      "expected": {
+        "verified": [
+          "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+        ],
+        "invalid": [
+          "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
+        ],
+        "unresolved": [],
+        "withheld": [],
+        "outOfHorizon": [],
+        "keyUnresolved": [],
+        "profileUnresolved": []
+      },
+      "expectedExtension": {
+        "lineageIncomplete": [
+          "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+        ]
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R8",
+      "description": "tip validation of V5, unknown profile, permissive",
+      "mode": "tip",
+      "targets": [
+        "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803"
+      ],
+      "nodes": [
+        "V5"
+      ],
+      "keys": [
+        "test-key-1"
+      ],
+      "strictProfiles": false,
+      "expected": {
+        "verified": [
+          "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803"
+        ],
+        "invalid": [],
+        "unresolved": [],
+        "withheld": [],
+        "outOfHorizon": [],
+        "keyUnresolved": [],
+        "profileUnresolved": [
+          "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803"
+        ]
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R9",
+      "description": "tip validation of V5, unknown profile, strict",
+      "mode": "tip",
+      "targets": [
+        "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803"
+      ],
+      "nodes": [
+        "V5"
+      ],
+      "keys": [
+        "test-key-1"
+      ],
+      "strictProfiles": true,
+      "expected": {
+        "verified": [],
+        "invalid": [
+          "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803"
+        ],
+        "unresolved": [],
+        "withheld": [],
+        "outOfHorizon": [],
+        "keyUnresolved": [],
+        "profileUnresolved": [
+          "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+name: ATP vectors
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  vectors:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["18", "20", "22"]
+        python: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Vectors are reproducible from source
+        run: |
+          node implementations/node/bin/generate-vectors.js
+          git diff --exit-code vectors/ || (echo "vectors/atp-core-test-vectors.json is stale; run npm run vectors:generate" && exit 1)
+      - name: Run all checks
+        run: ./implementations/run-all.sh

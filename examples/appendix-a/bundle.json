@@ -1,0 +1,183 @@
+{
+  "atpVersion": "1",
+  "nodes": [
+    {
+      "nodeId": "579a990bf8da950b027c16e1c4a2ebdcb37376719f19052e9a2f833e7f829e5a",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "platform.example",
+        "keyId": "platform-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:00Z",
+      "agent": {
+        "agentId": "orchestrator-agent",
+        "version": "1.3.0"
+      },
+      "actor": {
+        "actorId": "psn:9c3a7e4f-bob",
+        "authContext": "saml:corp-idp"
+      },
+      "action": {
+        "type": "atp:request",
+        "subtype": "tool_catalog_query",
+        "inputHash": "sha256:22d01b62b67fd95aa602f4ba4ba52689b4705ac348832e6a9e76b71e576638fb"
+      },
+      "parents": [],
+      "signature": "OzGGSI5DNV55SqENO281fdc6hKNCI6qmTIXWd3lLtkZojsME7gj5Atfc0cIpINJTKaqyr195LcT/y84x+c3MBQ=="
+    },
+    {
+      "nodeId": "a8723a4aa36f61d2b21cd88b147144dab9d13e72f0a74f93b2f0cd5e173b22ba",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "mcp-broker.example",
+        "keyId": "broker-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:00.110Z",
+      "agent": {
+        "agentId": "mcp-catalog-service",
+        "version": "2.1.0"
+      },
+      "action": {
+        "type": "atp:completion",
+        "subtype": "tool_catalog_response",
+        "inputHash": "sha256:22d01b62b67fd95aa602f4ba4ba52689b4705ac348832e6a9e76b71e576638fb",
+        "outputHash": "sha256:2888ec58f0a28271f6e97f0a3e13b7c264d74155e0abc03f133067bc5867ab97"
+      },
+      "parents": [
+        "579a990bf8da950b027c16e1c4a2ebdcb37376719f19052e9a2f833e7f829e5a"
+      ],
+      "signature": "PWVkwYwZ48tVjRF837MozSkpJM2wkmcVoZyJb9jIgMi69/okgi6XsA4cY17jXZcpbfIzZtprRQ/71IvZtZC3AA=="
+    },
+    {
+      "nodeId": "031bc52596527e4dd14afa9b6fc3aa266f900b4b42ff1b2f4a9b0580db963e45",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "platform.example",
+        "keyId": "platform-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:00.240Z",
+      "agent": {
+        "agentId": "orchestrator-agent",
+        "version": "1.3.0"
+      },
+      "actor": {
+        "actorId": "psn:9c3a7e4f-bob",
+        "authContext": "saml:corp-idp"
+      },
+      "action": {
+        "type": "atp:decision",
+        "subtype": "tool_selection_decision",
+        "inputHash": "sha256:2888ec58f0a28271f6e97f0a3e13b7c264d74155e0abc03f133067bc5867ab97",
+        "outputHash": "sha256:3ddd1467682bdda4e2088885ef0b409b75509938e214bfecd8512d9da9c8945a"
+      },
+      "parents": [
+        "a8723a4aa36f61d2b21cd88b147144dab9d13e72f0a74f93b2f0cd5e173b22ba"
+      ],
+      "signature": "QQ0kKslY/yJ92QOFAUFaCtvTLmFekx7+tkoKngtdi/pTbhN71nX4bOABX5bU7Wms3P0UkghDhs3IAM4dgghMCw=="
+    },
+    {
+      "nodeId": "714b58c244b9a054ab17a9fbee1bcdef5b4c7060005e9d18eca79d8e70428b25",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "platform.example",
+        "keyId": "platform-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:00.380Z",
+      "agent": {
+        "agentId": "orchestrator-agent",
+        "version": "1.3.0"
+      },
+      "actor": {
+        "actorId": "psn:9c3a7e4f-bob",
+        "authContext": "saml:corp-idp"
+      },
+      "action": {
+        "type": "atp:request",
+        "subtype": "tool_invocation_request",
+        "inputHash": "sha256:a3bf701ff235247fc3aa3e7c5ce8edbccb0b4fd501302f114e1859a1a3e8c08f"
+      },
+      "parents": [
+        "031bc52596527e4dd14afa9b6fc3aa266f900b4b42ff1b2f4a9b0580db963e45"
+      ],
+      "signature": "NzSoALi/VqVqks5PF88oMIrYX1HuuUf5vzEOuw/uDFImJPGApFAkkQbCGy+O7qHUiYMbmWjX9Gy+G599aIcxDg=="
+    },
+    {
+      "nodeId": "f65e738da788fee4e1b4d89916ce9227ca9f3820499c7e4e4c8bd2275f6ce12e",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "tool-crm.example",
+        "keyId": "crm-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:00.610Z",
+      "agent": {
+        "agentId": "crm-lookup-service",
+        "version": "5.0.2"
+      },
+      "action": {
+        "type": "atp:completion",
+        "subtype": "tool_execution",
+        "inputHash": "sha256:a3bf701ff235247fc3aa3e7c5ce8edbccb0b4fd501302f114e1859a1a3e8c08f",
+        "outputHash": "sha256:a7c0674dad2b224ce361bc6654c9ac4971ca0a47ed88fe04447eaa1350291cde"
+      },
+      "parents": [
+        "714b58c244b9a054ab17a9fbee1bcdef5b4c7060005e9d18eca79d8e70428b25"
+      ],
+      "signature": "QqAIEmA/1vHfJgVoboNqEc5bhlpwtEw/4StEeh4wrB+KseMXrMmD1NDZm5XbxRE4qHqgYQLUq+uDax0v2YmfBg=="
+    },
+    {
+      "nodeId": "d478c48bd3ae0f745bf1ca9b6468b1e773930b784af4cd2661c06e89cc25592c",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "mcp-broker.example",
+        "keyId": "broker-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:00.630Z",
+      "agent": {
+        "agentId": "mcp-relay-service",
+        "version": "2.1.0"
+      },
+      "action": {
+        "type": "atp:relay",
+        "subtype": "tool_execution_response",
+        "inputHash": "sha256:a7c0674dad2b224ce361bc6654c9ac4971ca0a47ed88fe04447eaa1350291cde",
+        "outputHash": "sha256:a7c0674dad2b224ce361bc6654c9ac4971ca0a47ed88fe04447eaa1350291cde"
+      },
+      "parents": [
+        "f65e738da788fee4e1b4d89916ce9227ca9f3820499c7e4e4c8bd2275f6ce12e"
+      ],
+      "signature": "g+ILCn+8KTvNsjYn2JkNIV1gltm+zt1ycjXy+Ql6OvWNz2ztBs+6fUGLp762MHfPcBQWqBVVIA5PXw9Fmx5yDg=="
+    },
+    {
+      "nodeId": "a4c8c920f0d491716f89ee280a42d6a4ad06dfb2cbbcc06f728450bd1078f58a",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "platform.example",
+        "keyId": "platform-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:00.820Z",
+      "agent": {
+        "agentId": "orchestrator-agent",
+        "version": "1.3.0"
+      },
+      "actor": {
+        "actorId": "psn:9c3a7e4f-bob",
+        "authContext": "saml:corp-idp"
+      },
+      "action": {
+        "type": "atp:decision",
+        "subtype": "decision_synthesis",
+        "inputHash": "sha256:d0e082d6f4487967ef8d477508b96300fd420f9136ee63531a32ade856574a46",
+        "outputHash": "sha256:8622adfa3c33b865789ea3800fe12d2f65b67f3e088ac93169873c44960d2137"
+      },
+      "parents": [
+        "d478c48bd3ae0f745bf1ca9b6468b1e773930b784af4cd2661c06e89cc25592c",
+        "031bc52596527e4dd14afa9b6fc3aa266f900b4b42ff1b2f4a9b0580db963e45"
+      ],
+      "signature": "L9fE3FLoWhDRWROmqDnYKA0449Mah26ej8gRuQszlyRSPlhA1u1ON3MLpDVZVRKPwSFJIrbQ3QOZEy8LjYqWDA=="
+    }
+  ],
+  "withheldNodeIds": [],
+  "scopes": [
+    "wf-8f3a1b"
+  ]
+}

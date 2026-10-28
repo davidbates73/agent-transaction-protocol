@@ -1,0 +1,35 @@
+{
+  "catalogQuery": {
+    "method": "tools/list",
+    "endpoint": "mcp://broker.example"
+  },
+  "catalog": {
+    "tools": [
+      {
+        "name": "crm.lookup_account"
+      },
+      {
+        "name": "crm.update_account"
+      }
+    ]
+  },
+  "selection": {
+    "chosen": "crm.lookup_account",
+    "reason": "read-only tool satisfies the task"
+  },
+  "invocation": {
+    "method": "tools/call",
+    "name": "crm.lookup_account",
+    "arguments": {
+      "accountId": "A-1001"
+    }
+  },
+  "result": {
+    "accountId": "A-1001",
+    "tier": "gold",
+    "openTickets": 2
+  },
+  "final": {
+    "answer": "Account A-1001 is gold tier with 2 open tickets."
+  }
+}
