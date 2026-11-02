@@ -186,6 +186,7 @@ let negative = [
     { id: 'N16', status: 'proposed-01', description: 'S1 with extra padding (=); MUST reject (pre-fix Node/Python split)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1 + '=', expectVerify: false },
     { id: 'N17', status: 'proposed-01', description: 'S1 truncated to 87 chars; MUST reject (pre-fix Node/Python split)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1.slice(0, 87), expectVerify: false },
     { id: 'N18', status: 'proposed-01', description: 'S1 with one extra alphabet char (89 chars); MUST reject (pre-fix Node/Python split)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1 + 'A', expectVerify: false },
+    { id: 'N19', status: 'proposed-01', description: 'S1 with non-canonical trailing bits (86th char altered; decoded bytes identical); MUST reject (RFC 4648 §3.5)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1.slice(0, 85) + 'R' + '==', expectVerify: false },
   );
 }
 

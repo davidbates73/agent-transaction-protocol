@@ -407,6 +407,15 @@
       "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
       "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ==A",
       "expectVerify": false
+    },
+    {
+      "id": "N19",
+      "status": "proposed-01",
+      "description": "S1 with non-canonical trailing bits (86th char altered; decoded bytes identical); MUST reject (RFC 4648 §3.5)",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCR==",
+      "expectVerify": false
     }
   ],
   "timestampFormat": [
