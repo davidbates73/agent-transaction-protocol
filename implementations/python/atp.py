@@ -244,6 +244,10 @@ def ed25519_verify(public: bytes, msg: bytes, sig: bytes) -> bool:
     R = _decompress(sig[:32])
     if A is None or R is None:
         return False
+    # Reject small-order A and R: [8]P equals the identity.
+    _identity = (0, 1, 1, 0)
+    if _equal(_mul(8, A), _identity) or _equal(_mul(8, R), _identity):
+        return False
     s = int.from_bytes(sig[32:], "little")
     if s >= _q:
         return False

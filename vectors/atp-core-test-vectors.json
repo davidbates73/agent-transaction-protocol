@@ -257,6 +257,56 @@
       "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce71",
       "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ==",
       "expectVerify": false
+    },
+    {
+      "id": "N5",
+      "status": "proposed-01",
+      "description": "S1 with non-canonical S (S+L); MUST fail verification",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureHex": "3f4d9fb756aba9bca11cfac15d65d82441dbf6f69adc9ba527b506c337985550f701e701ffd44497042985bce661c30af0303bef1e3e57e1988b1b46d83d5519",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVD3AecB/9RElwQphbzmYcMK8DA77x4+V+GYixtG2D1VGQ==",
+      "expectVerify": false
+    },
+    {
+      "id": "N6",
+      "status": "proposed-01",
+      "description": "non-canonical public key A (encoded y >= p); MUST fail verification",
+      "publicKeyHex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureHex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "signatureBase64": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+      "expectVerify": false
+    },
+    {
+      "id": "N7",
+      "status": "proposed-01",
+      "description": "non-canonical R (encoded y >= p) with S=0; MUST fail verification",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureHex": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f0000000000000000000000000000000000000000000000000000000000000000",
+      "signatureBase64": "7f///////////////////////////////////////38AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+      "expectVerify": false
+    },
+    {
+      "id": "N8",
+      "status": "proposed-01",
+      "description": "small-order public key A (identity) with R=identity and S=0; MUST fail even though the plain equation holds",
+      "publicKeyHex": "0100000000000000000000000000000000000000000000000000000000000000",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureHex": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "signatureBase64": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+      "expectVerify": false
+    },
+    {
+      "id": "N9",
+      "status": "proposed-01",
+      "description": "small-order R (identity) with S=(k*a) mod L so the plain equation holds for test-key-1; MUST fail",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureHex": "0100000000000000000000000000000000000000000000000000000000000000f799fd8a1c09bc46c34cd9ef67cc6d3d10d17dedeafa14166e4b94ad36194607",
+      "signatureBase64": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD3mf2KHAm8RsNM2e9nzG09ENF97er6FBZuS5StNhlGBw==",
+      "expectVerify": false
     }
   ],
   "signedNodes": {

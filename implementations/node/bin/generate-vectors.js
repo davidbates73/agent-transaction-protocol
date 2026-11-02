@@ -106,11 +106,69 @@ assertEq(signatures[0].signatureHex, S1_HEX, 'S1');
 // ---- negative vectors -----------------------------------------------------
 const wrongEncodingSig = crypto.sign(null, Buffer.from(id1, 'utf8'), k1.privateKey);
 const flipped = Buffer.from(S1_HEX, 'hex'); flipped[0] ^= 0x01;
+
+// Ed25519 constants / helpers for reject vectors (RFC 8032)
+const ED25519_L = 0x1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3edn;
+const ED25519_P = (1n << 255n) - 19n;
+const IDENTITY_POINT = Buffer.alloc(32); IDENTITY_POINT[0] = 0x01; // (0,1)
+const Y_GE_P = Buffer.alloc(32); // encoding of y = p (non-canonical)
+{ const b = Buffer.alloc(32); let x = ED25519_P; for (let i = 0; i < 32; i++) { b[i] = Number(x & 0xffn); x >>= 8n; } Y_GE_P.set(b); }
+
+function le32ToBigInt(buf) {
+  let x = 0n;
+  for (let i = 31; i >= 0; i--) x = (x << 8n) + BigInt(buf[i]);
+  return x;
+}
+function bigIntToLe32(x) {
+  const b = Buffer.alloc(32);
+  let v = x;
+  for (let i = 0; i < 32; i++) { b[i] = Number(v & 0xffn); v >>= 8n; }
+  return b;
+}
+function sha512Int(octets) {
+  const h = crypto.createHash('sha512').update(octets).digest();
+  let x = 0n;
+  for (let i = h.length - 1; i >= 0; i--) x = (x << 8n) + BigInt(h[i]);
+  return x;
+}
+function expandScalar(seedHex) {
+  const h = crypto.createHash('sha512').update(Buffer.from(seedHex, 'hex')).digest();
+  let a = 0n;
+  for (let i = 31; i >= 0; i--) a = (a << 8n) + BigInt(h[i]);
+  a &= (1n << 254n) - 8n;
+  a |= 1n << 254n;
+  return a;
+}
+
+// N5: non-canonical S = S + L on S1
+const s1Sig = Buffer.from(S1_HEX, 'hex');
+const sPlusL = Buffer.concat([s1Sig.subarray(0, 32), bigIntToLe32(le32ToBigInt(s1Sig.subarray(32)) + ED25519_L)]);
+
+// N6: non-canonical A (y >= p) with R=identity, S=0
+const sigRIdS0 = Buffer.concat([IDENTITY_POINT, Buffer.alloc(32)]);
+
+// N7: non-canonical R (y >= p), S=0, valid test-key-1
+const sigRYgepS0 = Buffer.concat([Y_GE_P, Buffer.alloc(32)]);
+
+// N8: small-order A = identity, R=identity, S=0 (plain eq holds; MUST still reject)
+// uses publicKeyHex override (identity is not derived from a seed)
+
+// N9: small-order R=identity with S=(k*a) mod L so plain eq holds for test-key-1
+const aScalar = expandScalar(SEED1);
+const kForSmallR = sha512Int(Buffer.concat([IDENTITY_POINT, k1.publicKeyRaw, Buffer.from(id1, 'hex')])) % ED25519_L;
+const sCrafted = (kForSmallR * aScalar) % ED25519_L;
+const sigSmallR = Buffer.concat([IDENTITY_POINT, bigIntToLe32(sCrafted)]);
+
 const negative = [
   { id: 'N1', status: 'proposed-01', description: 'signature computed over the 64-char hex STRING of V1 nodeId instead of its 32 raw bytes; MUST fail verification', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: wrongEncodingSig.toString('base64'), expectVerify: false },
   { id: 'N2', status: 'proposed-01', description: 'S1 with first signature byte flipped; MUST fail verification', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: flipped.toString('base64'), expectVerify: false },
   { id: 'N3', status: 'proposed-01', description: 'S3 (signed with test-key-2) verified against test-key-1; MUST fail', key: 'test-key-1', messageNodeIdHex: id4, signatureBase64: signatures[2].signatureBase64, expectVerify: false },
   { id: 'N4', status: 'proposed-01', description: 'valid S1 signature, message nodeId with last nibble altered; MUST fail', key: 'test-key-1', messageNodeIdHex: id1.slice(0, -1) + '1', signatureBase64: signatures[0].signatureBase64, expectVerify: false },
+  { id: 'N5', status: 'proposed-01', description: 'S1 with non-canonical S (S+L); MUST fail verification', key: 'test-key-1', messageNodeIdHex: id1, signatureHex: sPlusL.toString('hex'), signatureBase64: sPlusL.toString('base64'), expectVerify: false },
+  { id: 'N6', status: 'proposed-01', description: 'non-canonical public key A (encoded y >= p); MUST fail verification', publicKeyHex: Y_GE_P.toString('hex'), messageNodeIdHex: id1, signatureHex: sigRIdS0.toString('hex'), signatureBase64: sigRIdS0.toString('base64'), expectVerify: false },
+  { id: 'N7', status: 'proposed-01', description: 'non-canonical R (encoded y >= p) with S=0; MUST fail verification', key: 'test-key-1', messageNodeIdHex: id1, signatureHex: sigRYgepS0.toString('hex'), signatureBase64: sigRYgepS0.toString('base64'), expectVerify: false },
+  { id: 'N8', status: 'proposed-01', description: 'small-order public key A (identity) with R=identity and S=0; MUST fail even though the plain equation holds', publicKeyHex: IDENTITY_POINT.toString('hex'), messageNodeIdHex: id1, signatureHex: sigRIdS0.toString('hex'), signatureBase64: sigRIdS0.toString('base64'), expectVerify: false },
+  { id: 'N9', status: 'proposed-01', description: 'small-order R (identity) with S=(k*a) mod L so the plain equation holds for test-key-1; MUST fail', key: 'test-key-1', messageNodeIdHex: id1, signatureHex: sigSmallR.toString('hex'), signatureBase64: sigSmallR.toString('base64'), expectVerify: false },
 ];
 
 // ---- signed nodes + validation scenarios ----------------------------------

@@ -63,7 +63,8 @@ for s in V["signatures"]:
 
 print("\nNegative cases (MUST reject)")
 for n in V["negative"]:
-    got = atp.verify_node_id(n["messageNodeIdHex"], n["signatureBase64"], pubs[n["key"]])
+    pk = bytes.fromhex(n["publicKeyHex"]) if n.get("publicKeyHex") else pubs[n["key"]]
+    got = atp.verify_node_id(n["messageNodeIdHex"], n["signatureBase64"], pk)
     check(n["id"], n["status"], n["description"], got == n["expectVerify"])
 
 print("\nValidation modes and §13.6 result format")

@@ -59,7 +59,10 @@ for (const s of V.signatures) {
 
 console.log('\nNegative cases (MUST reject)');
 for (const n of V.negative) {
-  const got = verifyNodeId(n.messageNodeIdHex, n.signatureBase64, publicKeyFromRaw(pub[n.key].publicKeyRaw));
+  const raw = n.publicKeyHex
+    ? Buffer.from(n.publicKeyHex, 'hex')
+    : pub[n.key].publicKeyRaw;
+  const got = verifyNodeId(n.messageNodeIdHex, n.signatureBase64, publicKeyFromRaw(raw));
   check(n.id, n.status, n.description, got === n.expectVerify);
 }
 
