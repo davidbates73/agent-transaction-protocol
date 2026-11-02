@@ -51,12 +51,12 @@ const sign = (issuerId, fields) => createNode({ scope, issuer: iss(issuerId), ..
 
 // --- 3. Build the seven nodes (Appendix A.2).
 const n1 = sign('platform.example', { timestamp: '2026-04-23T12:58:00Z', agent: orch, actor: bob, action: { type: 'atp:request', subtype: 'tool_catalog_query', inputHash: H.catalogQuery }, parents: [] });
-const n2 = sign('mcp-broker.example', { timestamp: '2026-04-23T12:58:00.110Z', agent: { agentId: 'mcp-catalog-service', version: '2.1.0' }, action: { type: 'atp:completion', subtype: 'tool_catalog_response', inputHash: H.catalogQuery, outputHash: H.catalog }, parents: [n1.nodeId] });
-const n3 = sign('platform.example', { timestamp: '2026-04-23T12:58:00.240Z', agent: orch, actor: bob, action: { type: 'atp:decision', subtype: 'tool_selection_decision', inputHash: H.catalog, outputHash: H.selection }, parents: [n2.nodeId] });
-const n4 = sign('platform.example', { timestamp: '2026-04-23T12:58:00.380Z', agent: orch, actor: bob, action: { type: 'atp:request', subtype: 'tool_invocation_request', inputHash: H.invocation }, parents: [n3.nodeId] });
-const n5 = sign('tool-crm.example', { timestamp: '2026-04-23T12:58:00.610Z', agent: { agentId: 'crm-lookup-service', version: '5.0.2' }, action: { type: 'atp:completion', subtype: 'tool_execution', inputHash: H.invocation, outputHash: H.result }, parents: [n4.nodeId] });
-const n6 = sign('mcp-broker.example', { timestamp: '2026-04-23T12:58:00.630Z', agent: { agentId: 'mcp-relay-service', version: '2.1.0' }, action: { type: 'atp:relay', subtype: 'tool_execution_response', inputHash: H.result, outputHash: H.result }, parents: [n5.nodeId] });
-const n7 = sign('platform.example', { timestamp: '2026-04-23T12:58:00.820Z', agent: orch, actor: bob, action: { type: 'atp:decision', subtype: 'decision_synthesis', inputHash: H.synthesisInput, outputHash: H.final }, parents: [n6.nodeId, n3.nodeId] });
+const n2 = sign('mcp-broker.example', { timestamp: '2026-04-23T12:58:01Z', agent: { agentId: 'mcp-catalog-service', version: '2.1.0' }, action: { type: 'atp:completion', subtype: 'tool_catalog_response', inputHash: H.catalogQuery, outputHash: H.catalog }, parents: [n1.nodeId] });
+const n3 = sign('platform.example', { timestamp: '2026-04-23T12:58:02Z', agent: orch, actor: bob, action: { type: 'atp:decision', subtype: 'tool_selection_decision', inputHash: H.catalog, outputHash: H.selection }, parents: [n2.nodeId] });
+const n4 = sign('platform.example', { timestamp: '2026-04-23T12:58:03Z', agent: orch, actor: bob, action: { type: 'atp:request', subtype: 'tool_invocation_request', inputHash: H.invocation }, parents: [n3.nodeId] });
+const n5 = sign('tool-crm.example', { timestamp: '2026-04-23T12:58:04Z', agent: { agentId: 'crm-lookup-service', version: '5.0.2' }, action: { type: 'atp:completion', subtype: 'tool_execution', inputHash: H.invocation, outputHash: H.result }, parents: [n4.nodeId] });
+const n6 = sign('mcp-broker.example', { timestamp: '2026-04-23T12:58:05Z', agent: { agentId: 'mcp-relay-service', version: '2.1.0' }, action: { type: 'atp:relay', subtype: 'tool_execution_response', inputHash: H.result, outputHash: H.result }, parents: [n5.nodeId] });
+const n7 = sign('platform.example', { timestamp: '2026-04-23T12:58:06Z', agent: orch, actor: bob, action: { type: 'atp:decision', subtype: 'decision_synthesis', inputHash: H.synthesisInput, outputHash: H.final }, parents: [n6.nodeId, n3.nodeId] });
 const chain = [n1, n2, n3, n4, n5, n6, n7];
 const label = new Map(chain.map((n, i) => [n.nodeId, `N${i + 1}`]));
 const L = (ids) => (ids.length ? ids.map((id) => label.get(id) ?? short(id)).sort().join(', ') : '—');

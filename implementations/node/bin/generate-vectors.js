@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  canonicalize, computeNodeId, keyPairFromSeed, signNodeId, nodeContent,
+  canonicalize, computeNodeId, keyPairFromSeed, signNodeId, nodeContent, isAtpTimestamp,
 } from '../src/atp.js';
 import crypto from 'node:crypto';
 
@@ -195,6 +195,25 @@ const validation = [
 ];
 for (const r of validation) if (r.boundary) r.expected.boundary = r.boundary;
 
+// ---- timestamp format -----------------------------------------------------
+// Reject list from AI SME normative text: lowercase t/z, space separator,
+// fractional seconds, +00:00 offset, seconds=60, invalid calendar date.
+const timestampFormat = [
+  { id: 'T1', status: 'proposed-01', description: 'valid whole-second UTC timestamp', value: '2026-01-01T00:00:00Z', valid: true },
+  { id: 'T2', status: 'proposed-01', description: 'valid leap-day timestamp', value: '2024-02-29T12:34:56Z', valid: true },
+  { id: 'T3', status: 'proposed-01', description: 'lowercase t separator; MUST reject', value: '2026-01-01t00:00:00Z', valid: false },
+  { id: 'T4', status: 'proposed-01', description: 'lowercase z offset; MUST reject', value: '2026-01-01T00:00:00z', valid: false },
+  { id: 'T5', status: 'proposed-01', description: 'space instead of T; MUST reject', value: '2026-01-01 00:00:00Z', valid: false },
+  { id: 'T6', status: 'proposed-01', description: 'fractional seconds; MUST reject', value: '2026-01-01T00:00:00.1Z', valid: false },
+  { id: 'T7', status: 'proposed-01', description: '+00:00 offset instead of Z; MUST reject', value: '2026-01-01T00:00:00+00:00', valid: false },
+  { id: 'T8', status: 'proposed-01', description: 'seconds = 60; MUST reject', value: '2026-01-01T00:00:60Z', valid: false },
+  { id: 'T9', status: 'proposed-01', description: 'invalid calendar date 2026-02-30; MUST reject', value: '2026-02-30T00:00:00Z', valid: false },
+];
+for (const tcase of timestampFormat) {
+  const got = isAtpTimestamp(tcase.value);
+  if (got !== tcase.valid) throw new Error(`${tcase.id}: isAtpTimestamp=${got}, expected ${tcase.valid}`);
+}
+
 const doc = {
   title: 'ATP Core Test Vectors (machine-readable)',
   source: 'draft-bates-atp-test-vectors-00; entries marked proposed-01 are candidates for draft-bates-atp-test-vectors-01',
@@ -204,6 +223,7 @@ const doc = {
     signatureMessage: '32 raw bytes of nodeId (bytes.fromhex(nodeId)), not the hex string',
     signatureEncoding: 'base64 (RFC 4648 §4, standard alphabet, padded)',
     payloadHashFormat: '"sha256:" + 64 lowercase hex chars (as used by -00 vectors)',
+    timestampFormat: 'exactly 20 chars YYYY-MM-DDTHH:MM:SSZ (uppercase T/Z, no fraction; calendar-checked)',
     validationResult: '§13.6 keys; "lineageIncomplete" is an implementation extension proposed for -01',
   },
   keys,
@@ -211,6 +231,7 @@ const doc = {
   nodeId,
   signatures,
   negative,
+  timestampFormat,
   signedNodes: { ...signed, 'V2-tampered': V2tampered },
   validation,
 };

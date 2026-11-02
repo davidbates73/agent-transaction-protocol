@@ -132,9 +132,46 @@ export function verifyNodeId(nodeIdHex, signatureB64, publicKey) {
 
 /** Construct and sign a node. Returns a new object with nodeId + signature. */
 export function createNode(fields, privateKey) {
-  const content = omitNulls(nodeContent(fields));
+  const normalized = { ...fields };
+  if (typeof normalized.timestamp === 'string' && !isAtpTimestamp(normalized.timestamp)) {
+    // Emitters truncate to whole seconds; do not accept non-ATP forms as-is.
+    normalized.timestamp = formatAtpTimestamp(normalized.timestamp);
+  }
+  const content = omitNulls(nodeContent(normalized));
   const nodeId = computeNodeId(content);
   return { nodeId, ...content, signature: signNodeId(nodeId, privateKey) };
+}
+
+// ---------------------------------------------------------------------------
+// §8 Timestamp format (exactly 20 chars: YYYY-MM-DDTHH:MM:SSZ)
+// ---------------------------------------------------------------------------
+
+const ATP_TIMESTAMP_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$/;
+const _DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function _isLeap(y) { return y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0); }
+
+/** True iff s is exactly the ATP timestamp form (uppercase T/Z, no fraction, valid calendar). */
+export function isAtpTimestamp(s) {
+  if (typeof s !== 'string' || s.length !== 20) return false;
+  const m = ATP_TIMESTAMP_RE.exec(s);
+  if (!m) return false;
+  const Y = +m[1], Mo = +m[2], D = +m[3], H = +m[4], Mi = +m[5], S = +m[6];
+  if (Mo < 1 || Mo > 12 || H > 23 || Mi > 59 || S > 59) return false;
+  const dim = Mo === 2 && _isLeap(Y) ? 29 : _DAYS[Mo];
+  return D >= 1 && D <= dim;
+}
+
+/**
+ * Emit an ATP timestamp. Truncates (does not round) to whole UTC seconds.
+ * Accepts a Date, ms since epoch, or an ISO-ish string Date.parse can read.
+ */
+export function formatAtpTimestamp(value = new Date()) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) throw new Error('formatAtpTimestamp: invalid time');
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`
+    + `T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}Z`;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +184,7 @@ const HEX64 = /^[0-9a-f]{64}$/;
 export function structuralError(node) {
   if (node === null || typeof node !== 'object' || Array.isArray(node)) return 'node is not an object';
   for (const f of ['timestamp', 'scope']) if (typeof node[f] !== 'string') return `missing or non-string ${f}`;
+  if (!isAtpTimestamp(node.timestamp)) return 'timestamp must be YYYY-MM-DDTHH:MM:SSZ (20 chars, uppercase T/Z, no fraction)';
   if (typeof node.issuer?.issuerId !== 'string' || typeof node.issuer?.keyId !== 'string') return 'issuer.issuerId/keyId required';
   if (typeof node.agent?.agentId !== 'string' || typeof node.agent?.version !== 'string') return 'agent.agentId/version required';
   if (typeof node.action?.type !== 'string') return 'action.type required';
@@ -224,7 +262,10 @@ export function validate(opts) {
     if (mode !== 'bounded') return true;
     const b = opts.boundary;
     if (b.depth !== undefined && depth > b.depth) return false;
-    if (b.sinceTimestamp !== undefined && Date.parse(node.timestamp) < Date.parse(b.sinceTimestamp)) return false;
+    if (b.sinceTimestamp !== undefined) {
+      if (!isAtpTimestamp(b.sinceTimestamp) || !isAtpTimestamp(node.timestamp)) return false;
+      if (node.timestamp < b.sinceTimestamp) return false; // lexical == chronological for ATP form
+    }
     return true;
   }
 

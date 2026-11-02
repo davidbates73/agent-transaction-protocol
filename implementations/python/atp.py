@@ -273,9 +273,62 @@ def verify_node_id(node_id_hex: str, signature_b64: str, public_key: bytes) -> b
 
 
 def create_node(fields: dict, seed: bytes) -> dict:
-    content = omit_nulls(node_content(fields))
+    normalized = dict(fields)
+    ts = normalized.get("timestamp")
+    if isinstance(ts, str) and not is_atp_timestamp(ts):
+        normalized["timestamp"] = format_atp_timestamp(ts)
+    content = omit_nulls(node_content(normalized))
     node_id = compute_node_id(content)
     return {"nodeId": node_id, **content, "signature": sign_node_id(node_id, seed)}
+
+
+# ---------------------------------------------------------------------------
+# Section 8: Timestamp format (exactly 20 chars: YYYY-MM-DDTHH:MM:SSZ)
+# ---------------------------------------------------------------------------
+
+_ATP_TIMESTAMP_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$")
+_DAYS_IN_MONTH = (0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+
+
+def _is_leap(year: int) -> bool:
+    return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
+
+
+def is_atp_timestamp(s: str) -> bool:
+    """True iff s is exactly the ATP timestamp form (no Date/fromisoformat)."""
+    if not isinstance(s, str) or len(s) != 20:
+        return False
+    m = _ATP_TIMESTAMP_RE.fullmatch(s)
+    if not m:
+        return False
+    Y, Mo, D, H, Mi, S = (int(m.group(i)) for i in range(1, 7))
+    if Mo < 1 or Mo > 12 or H > 23 or Mi > 59 or S > 59:
+        return False
+    dim = 29 if Mo == 2 and _is_leap(Y) else _DAYS_IN_MONTH[Mo]
+    return 1 <= D <= dim
+
+
+def format_atp_timestamp(value=None) -> str:
+    """Emit an ATP timestamp; truncate (do not round) to whole UTC seconds."""
+    from datetime import timezone
+    if value is None:
+        dt = datetime.now(timezone.utc)
+    elif isinstance(value, datetime):
+        dt = value if value.tzinfo is None else value.astimezone(timezone.utc)
+    elif isinstance(value, (int, float)):
+        dt = datetime.fromtimestamp(value, tz=timezone.utc)
+    elif isinstance(value, str):
+        # Emitter convenience only — validators must use is_atp_timestamp, not this.
+        s = value
+        if s.endswith("Z") or s.endswith("z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc)
+    else:
+        raise TypeError("format_atp_timestamp: unsupported type")
+    # Truncate fractional seconds (datetime already exposes whole .second)
+    return f"{dt.year:04d}-{dt.month:02d}-{dt.day:02d}T{dt.hour:02d}:{dt.minute:02d}:{dt.second:02d}Z"
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +344,8 @@ def structural_error(node) -> Optional[str]:
     for f in ("timestamp", "scope"):
         if not isinstance(node.get(f), str):
             return f"missing or non-string {f}"
+    if not is_atp_timestamp(node["timestamp"]):
+        return "timestamp must be YYYY-MM-DDTHH:MM:SSZ (20 chars, uppercase T/Z, no fraction)"
     iss, ag, act = node.get("issuer"), node.get("agent"), node.get("action")
     if not (isinstance(iss, dict) and isinstance(iss.get("issuerId"), str) and isinstance(iss.get("keyId"), str)):
         return "issuer.issuerId/keyId required"
@@ -311,8 +366,11 @@ def structural_error(node) -> Optional[str]:
     return None
 
 
-def _ts(s: str) -> float:
-    return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+def _ts(s: str) -> str:
+    """Boundary compare key: ATP timestamps sort lexicographically == chronologically."""
+    if not is_atp_timestamp(s):
+        raise ValueError(f"not an ATP timestamp: {s!r}")
+    return s
 
 
 def validate(
@@ -376,8 +434,12 @@ def validate(
             return True
         if "depth" in boundary and depth > boundary["depth"]:
             return False
-        if "sinceTimestamp" in boundary and _ts(n["timestamp"]) < _ts(boundary["sinceTimestamp"]):
-            return False
+        if "sinceTimestamp" in boundary:
+            since = boundary["sinceTimestamp"]
+            if not is_atp_timestamp(since) or not is_atp_timestamp(n["timestamp"]):
+                return False
+            if n["timestamp"] < since:  # lexical == chronological for ATP form
+                return False
         return True
 
     def relay_state(n) -> str:

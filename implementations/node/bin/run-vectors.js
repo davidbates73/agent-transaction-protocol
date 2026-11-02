@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   canonicalize, computeNodeId, nodeContent, keyPairFromSeed, signNodeId,
-  verifyNodeId, publicKeyFromRaw, validate, keyResolver, indexNodes,
+  verifyNodeId, publicKeyFromRaw, validate, keyResolver, indexNodes, isAtpTimestamp,
 } from '../src/atp.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -55,6 +55,11 @@ for (const s of V.signatures) {
   const ok = Buffer.from(sig, 'base64').toString('hex') === s.signatureHex && sig === s.signatureBase64
     && verifyNodeId(s.messageNodeIdHex, s.signatureBase64, publicKeyFromRaw(kp.publicKeyRaw));
   check(s.id, s.status, s.description, ok);
+}
+
+console.log('\nTimestamp format (§8)');
+for (const tcase of V.timestampFormat ?? []) {
+  check(tcase.id, tcase.status, tcase.description, isAtpTimestamp(tcase.value) === tcase.valid);
 }
 
 console.log('\nNegative cases (MUST reject)');

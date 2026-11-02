@@ -61,6 +61,11 @@ for s in V["signatures"]:
           and atp.verify_node_id(s["messageNodeIdHex"], s["signatureBase64"], pubs[s["key"]]))
     check(s["id"], s["status"], s["description"], ok)
 
+print("\nTimestamp format (§8)")
+for tcase in V.get("timestampFormat", []):
+    check(tcase["id"], tcase["status"], tcase["description"],
+          atp.is_atp_timestamp(tcase["value"]) == tcase["valid"])
+
 print("\nNegative cases (MUST reject)")
 for n in V["negative"]:
     pk = bytes.fromhex(n["publicKeyHex"]) if n.get("publicKeyHex") else pubs[n["key"]]
