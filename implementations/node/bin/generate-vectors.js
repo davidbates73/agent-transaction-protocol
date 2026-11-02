@@ -162,7 +162,7 @@ const kForSmallR = sha512Int(Buffer.concat([IDENTITY_POINT, k1.publicKeyRaw, Buf
 const sCrafted = (kForSmallR * aScalar) % ED25519_L;
 const sigSmallR = Buffer.concat([IDENTITY_POINT, bigIntToLe32(sCrafted)]);
 
-const negative = [
+let negative = [
   { id: 'N1', status: 'proposed-01', description: 'signature computed over the 64-char hex STRING of V1 nodeId instead of its 32 raw bytes; MUST fail verification', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: wrongEncodingSig.toString('base64'), expectVerify: false },
   { id: 'N2', status: 'proposed-01', description: 'S1 with first signature byte flipped; MUST fail verification', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: flipped.toString('base64'), expectVerify: false },
   { id: 'N3', status: 'proposed-01', description: 'S3 (signed with test-key-2) verified against test-key-1; MUST fail', key: 'test-key-1', messageNodeIdHex: id4, signatureBase64: signatures[2].signatureBase64, expectVerify: false },
@@ -173,6 +173,21 @@ const negative = [
   { id: 'N8', status: 'proposed-01', description: 'small-order public key A (identity) with R=identity and S=0; MUST fail even though the plain equation holds', publicKeyHex: IDENTITY_POINT.toString('hex'), messageNodeIdHex: id1, signatureHex: sigRIdS0.toString('hex'), signatureBase64: sigRIdS0.toString('base64'), expectVerify: false },
   { id: 'N9', status: 'proposed-01', description: 'small-order R (identity) with S=(k*a) mod L so the plain equation holds for test-key-1; MUST fail', key: 'test-key-1', messageNodeIdHex: id1, signatureHex: sigSmallR.toString('hex'), signatureBase64: sigSmallR.toString('base64'), expectVerify: false },
 ];
+{
+  const s1 = signatures[0].signatureBase64;
+  const s1url = s1.replace(/\+/g, '-').replace(/\//g, '_');
+  negative.push(
+    { id: 'N10', status: 'proposed-01', description: 'S1 with padding omitted (86 chars, no ==); MUST reject strict base64', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1.slice(0, 86), expectVerify: false },
+    { id: 'N11', status: 'proposed-01', description: 'S1 with embedded line break in signature; MUST reject strict base64', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1.slice(0, 40) + '\n' + s1.slice(40), expectVerify: false },
+    { id: 'N12', status: 'proposed-01', description: 'S1 with trailing newline; MUST reject strict base64 (pre-fix Node/Python split)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1 + '\n', expectVerify: false },
+    { id: 'N13', status: 'proposed-01', description: 'S1 with leading space; MUST reject strict base64 (pre-fix Node/Python split)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: ' ' + s1, expectVerify: false },
+    { id: 'N14', status: 'proposed-01', description: 'S1 with trailing space; MUST reject strict base64 (pre-fix Node/Python split)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1 + ' ', expectVerify: false },
+    { id: 'N15', status: 'proposed-01', description: 'S1 in URL-safe base64 (-_ instead of +/); MUST reject strict alphabet (pre-fix Node/Python split)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1url, expectVerify: false },
+    { id: 'N16', status: 'proposed-01', description: 'S1 with extra padding (=); MUST reject (pre-fix Node/Python split)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1 + '=', expectVerify: false },
+    { id: 'N17', status: 'proposed-01', description: 'S1 truncated to 87 chars; MUST reject (pre-fix Node/Python split)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1.slice(0, 87), expectVerify: false },
+    { id: 'N18', status: 'proposed-01', description: 'S1 with one extra alphabet char (89 chars); MUST reject (pre-fix Node/Python split)', key: 'test-key-1', messageNodeIdHex: id1, signatureBase64: s1 + 'A', expectVerify: false },
+  );
+}
 
 // ---- signed nodes + validation scenarios ----------------------------------
 const signed = {
@@ -297,7 +312,7 @@ const doc = {
     canonicalization: 'ATP §9 null-member omission (recursive) followed by RFC 8785 JCS',
     nodeId: 'lowercase hex SHA-256 of canonical UTF-8 bytes, nodeId and signature removed first',
     signatureMessage: '32 raw bytes of nodeId (bytes.fromhex(nodeId)), not the hex string',
-    signatureEncoding: 'base64 (RFC 4648 §4, standard alphabet, padded)',
+    signatureEncoding: 'base64 (RFC 4648 §4: A-Za-z0-9+/, exactly 88 chars with == padding, no whitespace; canonical trailing bits)',
     payloadHashFormat: '"sha256:" + 64 lowercase hex; nodeId/parents stay bare lowercase hex; any other form rejected',
     timestampFormat: 'exactly 20 chars YYYY-MM-DDTHH:MM:SSZ (uppercase T/Z, no fraction; calendar-checked)',
     validationResult: '§13.6 keys including lineageIncomplete (disjoint from verified; empty in tip mode)',

@@ -5,7 +5,7 @@
     "canonicalization": "ATP §9 null-member omission (recursive) followed by RFC 8785 JCS",
     "nodeId": "lowercase hex SHA-256 of canonical UTF-8 bytes, nodeId and signature removed first",
     "signatureMessage": "32 raw bytes of nodeId (bytes.fromhex(nodeId)), not the hex string",
-    "signatureEncoding": "base64 (RFC 4648 §4, standard alphabet, padded)",
+    "signatureEncoding": "base64 (RFC 4648 §4: A-Za-z0-9+/, exactly 88 chars with == padding, no whitespace; canonical trailing bits)",
     "payloadHashFormat": "\"sha256:\" + 64 lowercase hex; nodeId/parents stay bare lowercase hex; any other form rejected",
     "timestampFormat": "exactly 20 chars YYYY-MM-DDTHH:MM:SSZ (uppercase T/Z, no fraction; calendar-checked)",
     "validationResult": "§13.6 keys including lineageIncomplete (disjoint from verified; empty in tip mode)"
@@ -325,6 +325,87 @@
       "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
       "signatureHex": "0100000000000000000000000000000000000000000000000000000000000000f799fd8a1c09bc46c34cd9ef67cc6d3d10d17dedeafa14166e4b94ad36194607",
       "signatureBase64": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD3mf2KHAm8RsNM2e9nzG09ENF97er6FBZuS5StNhlGBw==",
+      "expectVerify": false
+    },
+    {
+      "id": "N10",
+      "status": "proposed-01",
+      "description": "S1 with padding omitted (86 chars, no ==); MUST reject strict base64",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ",
+      "expectVerify": false
+    },
+    {
+      "id": "N11",
+      "status": "proposed-01",
+      "description": "S1 with embedded line break in signature; MUST reject strict base64",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeY\nVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ==",
+      "expectVerify": false
+    },
+    {
+      "id": "N12",
+      "status": "proposed-01",
+      "description": "S1 with trailing newline; MUST reject strict base64 (pre-fix Node/Python split)",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ==\n",
+      "expectVerify": false
+    },
+    {
+      "id": "N13",
+      "status": "proposed-01",
+      "description": "S1 with leading space; MUST reject strict base64 (pre-fix Node/Python split)",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": " P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ==",
+      "expectVerify": false
+    },
+    {
+      "id": "N14",
+      "status": "proposed-01",
+      "description": "S1 with trailing space; MUST reject strict base64 (pre-fix Node/Python split)",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ== ",
+      "expectVerify": false
+    },
+    {
+      "id": "N15",
+      "status": "proposed-01",
+      "description": "S1 in URL-safe base64 (-_ instead of +/); MUST reject strict alphabet (pre-fix Node/Python split)",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4-V-GYixtG2D1VCQ==",
+      "expectVerify": false
+    },
+    {
+      "id": "N16",
+      "status": "proposed-01",
+      "description": "S1 with extra padding (=); MUST reject (pre-fix Node/Python split)",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ===",
+      "expectVerify": false
+    },
+    {
+      "id": "N17",
+      "status": "proposed-01",
+      "description": "S1 truncated to 87 chars; MUST reject (pre-fix Node/Python split)",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ=",
+      "expectVerify": false
+    },
+    {
+      "id": "N18",
+      "status": "proposed-01",
+      "description": "S1 with one extra alphabet char (89 chars); MUST reject (pre-fix Node/Python split)",
+      "key": "test-key-1",
+      "messageNodeIdHex": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "signatureBase64": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ==A",
       "expectVerify": false
     }
   ],

@@ -409,13 +409,34 @@ def ed25519_verify(public: bytes, msg: bytes, sig: bytes) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# Strict ATP signature base64: RFC 4648 §4, exactly 88 chars, padded, no whitespace.
+_ATP_SIG_B64_RE = re.compile(r"^[A-Za-z0-9+/]{86}==$")
+
+
+def _decode_atp_signature_b64(signature_b64: str):
+    if not isinstance(signature_b64, str) or _ATP_SIG_B64_RE.fullmatch(signature_b64) is None:
+        return None
+    try:
+        sig = base64.b64decode(signature_b64, validate=True)
+    except Exception:
+        return None
+    if len(sig) != 64:
+        return None
+    # Reject non-canonical encodings (e.g. non-zero trailing bits in the last quartet).
+    if base64.b64encode(sig).decode("ascii") != signature_b64:
+        return None
+    return sig
+
+
 def sign_node_id(node_id_hex: str, seed: bytes) -> str:
     return base64.b64encode(ed25519_sign(seed, bytes.fromhex(node_id_hex))).decode("ascii")
 
 
 def verify_node_id(node_id_hex: str, signature_b64: str, public_key: bytes) -> bool:
     try:
-        sig = base64.b64decode(signature_b64, validate=True)
+        sig = _decode_atp_signature_b64(signature_b64)
+        if sig is None:
+            return False
         return ed25519_verify(public_key, bytes.fromhex(node_id_hex), sig)
     except Exception:  # malformed input is a verification failure
         return False

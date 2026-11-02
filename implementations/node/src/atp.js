@@ -339,16 +339,28 @@ export function publicKeyFromRaw(raw) {
  * §10.3: signature = Sign(privateKey, nodeId).
  * The message is the 32 raw bytes of the SHA-256 digest, NOT the
  * 64-character hex string (test-vectors §5.2 is explicit; Core is not).
- * Encoding: standard base64 with padding (RFC 4648 §4).
+ * Encoding: strict base64 with padding (RFC 4648 §4): exactly 88 chars, alphabet A-Za-z0-9+/, no whitespace.
  */
 export function signNodeId(nodeIdHex, privateKey) {
   return crypto.sign(null, Buffer.from(nodeIdHex, 'hex'), privateKey).toString('base64');
 }
 
+/** Strict ATP signature base64: RFC 4648 §4, exactly 88 chars, padded, no whitespace. */
+const ATP_SIG_B64_RE = /^[A-Za-z0-9+/]{86}==$/;
+
+function decodeAtpSignatureB64(signatureB64) {
+  if (typeof signatureB64 !== 'string' || !ATP_SIG_B64_RE.test(signatureB64)) return null;
+  const sig = Buffer.from(signatureB64, 'base64');
+  if (sig.length !== 64) return null;
+  // Reject non-canonical encodings (e.g. non-zero trailing bits in the last quartet).
+  if (sig.toString('base64') !== signatureB64) return null;
+  return sig;
+}
+
 export function verifyNodeId(nodeIdHex, signatureB64, publicKey) {
   try {
-    const sig = Buffer.from(signatureB64, 'base64');
-    if (sig.length !== 64) return false;
+    const sig = decodeAtpSignatureB64(signatureB64);
+    if (!sig) return false;
     return crypto.verify(null, Buffer.from(nodeIdHex, 'hex'), publicKey, sig);
   } catch {
     return false;
