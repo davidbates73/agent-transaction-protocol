@@ -238,6 +238,9 @@ expectParseReject('J4', '{"n":9007199254740993}');
 expectParseReject('J5', '{"n":1e400}');
 expectParseAccept('Jpair', '{"s":"\\uD800\\uDC00"}');
 expectParseAccept('J6', '{"n":1.5}');
+expectParseReject('J7', '{"n":1e-400}');
+expectParseAccept('J8', '{"n":0e-400}');
+expectParseAccept('J9', '{"n":5e-324}');
 
 const ijson = [
   { id: 'J1', status: 'proposed-01', description: 'duplicate member name at top level; MUST reject', inputJson: '{"a":1,"a":2}', expectReject: true },
@@ -246,6 +249,9 @@ const ijson = [
   { id: 'J4', status: 'proposed-01', description: 'integer 9007199254740993 outside ±(2^53-1); MUST reject (raw token)', inputJson: '{"n":9007199254740993}', expectReject: true },
   { id: 'J5', status: 'proposed-01', description: 'number 1e400 outside IEEE-754 double; MUST reject', inputJson: '{"n":1e400}', expectReject: true },
   { id: 'J6', status: 'proposed-01', description: 'ordinary decimal 1.5 is accepted (finite non-integer)', inputJson: '{"n":1.5}', expectReject: false },
+  { id: 'J7', status: 'proposed-01', description: 'underflow 1e-400 converts to 0; MUST reject (non-zero mantissa)', inputJson: '{"n":1e-400}', expectReject: true },
+  { id: 'J8', status: 'proposed-01', description: 'zero literal 0e-400 is accepted (mantissa has no non-zero digit)', inputJson: '{"n":0e-400}', expectReject: false },
+  { id: 'J9', status: 'proposed-01', description: 'smallest positive denormal 5e-324 is a non-zero double; MUST accept', inputJson: '{"n":5e-324}', expectReject: false },
 ];
 
 const baseStruct = {

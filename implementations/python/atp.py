@@ -205,6 +205,16 @@ def _reject_bad_number_tokens(text: str) -> None:
                 raise ValueError(f"I-JSON: number outside IEEE-754 double: {tok}") from None
             if not math.isfinite(f):
                 raise ValueError(f"I-JSON: number outside IEEE-754 double: {tok}")
+            # Underflow: non-zero mantissa literal that converts to +0.0/-0.0 as a double.
+            # Digits in the mantissa only (before e/E), so 0e-400 / 0E5 stay accepted.
+            if f == 0.0:
+                mant = tok[1:] if tok.startswith("-") else tok
+                for sep in ("e", "E"):
+                    if sep in mant:
+                        mant = mant.split(sep, 1)[0]
+                        break
+                if any(ch in mant for ch in "123456789"):
+                    raise ValueError(f"I-JSON: number underflows to zero: {tok}")
             if is_int:
                 bi = int(tok)
                 if abs(bi) > _MAX_SAFE:

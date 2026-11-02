@@ -442,6 +442,27 @@
       "description": "ordinary decimal 1.5 is accepted (finite non-integer)",
       "inputJson": "{\"n\":1.5}",
       "expectReject": false
+    },
+    {
+      "id": "J7",
+      "status": "proposed-01",
+      "description": "underflow 1e-400 converts to 0; MUST reject (non-zero mantissa)",
+      "inputJson": "{\"n\":1e-400}",
+      "expectReject": true
+    },
+    {
+      "id": "J8",
+      "status": "proposed-01",
+      "description": "zero literal 0e-400 is accepted (mantissa has no non-zero digit)",
+      "inputJson": "{\"n\":0e-400}",
+      "expectReject": false
+    },
+    {
+      "id": "J9",
+      "status": "proposed-01",
+      "description": "smallest positive denormal 5e-324 is a non-zero double; MUST accept",
+      "inputJson": "{\"n\":5e-324}",
+      "expectReject": false
     }
   ],
   "structural": [

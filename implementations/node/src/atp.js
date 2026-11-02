@@ -247,6 +247,14 @@ function _rejectBadNumberTokens(text) {
       const tok = s.slice(start, i);
       const num = Number(tok);
       if (!Number.isFinite(num)) throw new Error(`I-JSON: number outside IEEE-754 double: ${tok}`);
+      // Underflow: non-zero mantissa literal that converts to +0/-0 as a double.
+      // Check digits in the mantissa only (before e/E), so 0e-400 / 0E5 stay accepted.
+      if (num === 0) {
+        let mant = tok[0] === '-' ? tok.slice(1) : tok;
+        const eIdx = mant.search(/[eE]/);
+        if (eIdx >= 0) mant = mant.slice(0, eIdx);
+        if (/[1-9]/.test(mant)) throw new Error(`I-JSON: number underflows to zero: ${tok}`);
+      }
       if (isInt) {
         const bi = BigInt(tok);
         const lim = BigInt(MAX_SAFE);
