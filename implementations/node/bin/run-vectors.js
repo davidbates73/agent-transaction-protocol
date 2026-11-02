@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   canonicalize, computeNodeId, nodeContent, keyPairFromSeed, signNodeId,
   verifyNodeId, publicKeyFromRaw, validate, keyResolver, indexNodes, isAtpTimestamp,
+  parseAtpJson, structuralError,
 } from '../src/atp.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -60,6 +61,19 @@ for (const s of V.signatures) {
 console.log('\nTimestamp format (§8)');
 for (const tcase of V.timestampFormat ?? []) {
   check(tcase.id, tcase.status, tcase.description, isAtpTimestamp(tcase.value) === tcase.valid);
+}
+
+console.log('\nI-JSON parse (§9 / RFC 7493)');
+for (const j of V.ijson ?? []) {
+  let rejected = false;
+  try { parseAtpJson(j.inputJson); } catch { rejected = true; }
+  check(j.id, j.status, j.description, rejected === !!j.expectReject);
+}
+
+console.log('\nStructural rejects');
+for (const s of V.structural ?? []) {
+  const err = structuralError(s.node);
+  check(s.id, s.status, s.description, (err !== null) === !!s.expectError, err || '');
 }
 
 console.log('\nNegative cases (MUST reject)');

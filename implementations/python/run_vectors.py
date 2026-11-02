@@ -66,6 +66,20 @@ for tcase in V.get("timestampFormat", []):
     check(tcase["id"], tcase["status"], tcase["description"],
           atp.is_atp_timestamp(tcase["value"]) == tcase["valid"])
 
+print("\nI-JSON parse (§9 / RFC 7493)")
+for j in V.get("ijson", []):
+    rejected = False
+    try:
+        atp.parse_atp_json(j["inputJson"])
+    except Exception:
+        rejected = True
+    check(j["id"], j["status"], j["description"], rejected == bool(j["expectReject"]))
+
+print("\nStructural rejects")
+for s in V.get("structural", []):
+    err = atp.structural_error(s["node"])
+    check(s["id"], s["status"], s["description"], (err is not None) == bool(s["expectError"]), err or "")
+
 print("\nNegative cases (MUST reject)")
 for n in V["negative"]:
     pk = bytes.fromhex(n["publicKeyHex"]) if n.get("publicKeyHex") else pubs[n["key"]]

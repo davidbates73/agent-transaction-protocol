@@ -58,6 +58,223 @@ export function canonicalize(value) {
 }
 
 // ---------------------------------------------------------------------------
+// §9 / RFC 7493 I-JSON gate (duplicates, surrogates, number range)
+// ---------------------------------------------------------------------------
+
+const MAX_SAFE = Number.MAX_SAFE_INTEGER; // 2^53 - 1
+
+/** True if s contains an unpaired UTF-16 surrogate. */
+export function hasUnpairedSurrogate(s) {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0xD800 && c <= 0xDBFF) {
+      const d = s.charCodeAt(i + 1);
+      if (d >= 0xDC00 && d <= 0xDFFF) { i++; continue; }
+      return true;
+    }
+    if (c >= 0xDC00 && c <= 0xDFFF) return true;
+  }
+  return false;
+}
+
+/**
+ * Deep I-JSON check on a parsed value. Returns a reason string or null.
+ * Rejects unpaired surrogates and numbers outside the I-JSON interoperable
+ * range (non-finite, or integers with abs > 2^53-1).
+ */
+export function ijsonError(value) {
+  if (typeof value === 'string') {
+    return hasUnpairedSurrogate(value) ? 'I-JSON: unpaired surrogate in string' : null;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 'I-JSON: non-finite number';
+    if (Number.isInteger(value) && Math.abs(value) > MAX_SAFE) {
+      return 'I-JSON: integer outside ±(2^53-1)';
+    }
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const e = ijsonError(v);
+      if (e) return e;
+    }
+    return null;
+  }
+  if (value !== null && typeof value === 'object') {
+    for (const [k, v] of Object.entries(value)) {
+      if (hasUnpairedSurrogate(k)) return 'I-JSON: unpaired surrogate in member name';
+      const e = ijsonError(v);
+      if (e) return e;
+    }
+  }
+  return null;
+}
+
+function _decodeJsonStringBody(body) {
+  return JSON.parse(`"${body}"`);
+}
+
+/** Scan JSON text; return a duplicate member name or null. */
+function _scanDuplicateMember(text) {
+  let i = 0;
+  const s = text;
+  const n = s.length;
+  const peek = () => s[i];
+  const eof = () => i >= n;
+  const skipWs = () => { while (!eof() && ' \t\r\n'.includes(peek())) i++; };
+
+  function parseString() {
+    if (peek() !== '"') throw new Error(`JSON: expected string at ${i}`);
+    i++;
+    let body = '';
+    while (!eof()) {
+      const c = peek();
+      if (c === '"') { i++; return _decodeJsonStringBody(body); }
+      if (c === '\\') {
+        body += c; i++;
+        if (eof()) throw new Error('JSON: truncated escape');
+        body += peek(); i++;
+        continue;
+      }
+      body += c; i++;
+    }
+    throw new Error('JSON: unterminated string');
+  }
+
+  function parseValue() {
+    skipWs();
+    if (eof()) throw new Error('JSON: unexpected end');
+    const c = peek();
+    if (c === '{') return parseObject();
+    if (c === '[') return parseArray();
+    if (c === '"') { parseString(); return null; }
+    if (c === 't') { i += 4; return null; }
+    if (c === 'f') { i += 5; return null; }
+    if (c === 'n') { i += 4; return null; }
+    if (c === '-' || (c >= '0' && c <= '9')) {
+      if (peek() === '-') i++;
+      while (!eof() && peek() >= '0' && peek() <= '9') i++;
+      if (peek() === '.') { i++; while (!eof() && peek() >= '0' && peek() <= '9') i++; }
+      if (peek() === 'e' || peek() === 'E') {
+        i++;
+        if (peek() === '+' || peek() === '-') i++;
+        while (!eof() && peek() >= '0' && peek() <= '9') i++;
+      }
+      return null;
+    }
+    throw new Error(`JSON: unexpected ${JSON.stringify(c)} at ${i}`);
+  }
+
+  function parseArray() {
+    i++;
+    skipWs();
+    if (peek() === ']') { i++; return; }
+    for (;;) {
+      const d = parseValue();
+      if (typeof d === 'string') return d;
+      skipWs();
+      if (peek() === ']') { i++; return null; }
+      if (peek() !== ',') throw new Error(`JSON: expected comma at ${i}`);
+      i++;
+    }
+  }
+
+  function parseObject() {
+    i++;
+    skipWs();
+    if (peek() === '}') { i++; return null; }
+    const seen = new Set();
+    for (;;) {
+      skipWs();
+      const key = parseString();
+      if (seen.has(key)) return key;
+      seen.add(key);
+      skipWs();
+      if (peek() !== ':') throw new Error(`JSON: expected colon at ${i}`);
+      i++;
+      const nestedDup = parseValue();
+      if (typeof nestedDup === 'string') return nestedDup;
+      skipWs();
+      if (peek() === '}') { i++; return null; }
+      if (peek() !== ',') throw new Error(`JSON: expected comma at ${i}`);
+      i++;
+    }
+  }
+
+  skipWs();
+  const d = parseValue();
+  return typeof d === 'string' ? d : null;
+}
+
+function _rejectBadNumberTokens(text) {
+  let i = 0;
+  const s = text;
+  const n = s.length;
+  while (i < n) {
+    const c = s[i];
+    if (c === '"') {
+      i++;
+      while (i < n) {
+        if (s[i] === '\\') { i += 2; continue; }
+        if (s[i] === '"') { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (c === '-' || (c >= '0' && c <= '9')) {
+      // Do not treat digits that are part of identifiers — JSON numbers only appear
+      // as values (after : or [ or ,) but a full scan of number-shaped tokens that
+      // are not inside strings is sufficient for ATP vectors.
+      if (i > 0) {
+        const prev = s[i - 1];
+        if (/[0-9a-zA-Z_]/.test(prev)) { i++; continue; }
+      }
+      const start = i;
+      if (s[i] === '-') i++;
+      while (i < n && s[i] >= '0' && s[i] <= '9') i++;
+      let isInt = true;
+      if (i < n && s[i] === '.') {
+        isInt = false;
+        i++;
+        while (i < n && s[i] >= '0' && s[i] <= '9') i++;
+      }
+      if (i < n && (s[i] === 'e' || s[i] === 'E')) {
+        isInt = false;
+        i++;
+        if (i < n && (s[i] === '+' || s[i] === '-')) i++;
+        while (i < n && s[i] >= '0' && s[i] <= '9') i++;
+      }
+      const tok = s.slice(start, i);
+      const num = Number(tok);
+      if (!Number.isFinite(num)) throw new Error(`I-JSON: number outside IEEE-754 double: ${tok}`);
+      if (isInt) {
+        const bi = BigInt(tok);
+        const lim = BigInt(MAX_SAFE);
+        if (bi > lim || bi < -lim) throw new Error(`I-JSON: integer outside ±(2^53-1): ${tok}`);
+      }
+      continue;
+    }
+    i++;
+  }
+}
+
+/**
+ * Parse JSON text as I-JSON for ATP: reject duplicate member names,
+ * unpaired surrogates, and out-of-range numbers. Never keeps first/last on dups.
+ */
+export function parseAtpJson(text) {
+  if (typeof text !== 'string') throw new Error('parseAtpJson: text must be a string');
+  const dup = _scanDuplicateMember(text);
+  if (dup !== null) throw new Error(`I-JSON: duplicate member name: ${JSON.stringify(dup)}`);
+  _rejectBadNumberTokens(text);
+  const value = JSON.parse(text);
+  const err = ijsonError(value);
+  if (err) throw new Error(err);
+  return value;
+}
+
+
+// ---------------------------------------------------------------------------
 // §10.1 Node identity
 // ---------------------------------------------------------------------------
 
@@ -188,6 +405,7 @@ export function structuralError(node) {
   if (typeof node.issuer?.issuerId !== 'string' || typeof node.issuer?.keyId !== 'string') return 'issuer.issuerId/keyId required';
   if (typeof node.agent?.agentId !== 'string' || typeof node.agent?.version !== 'string') return 'agent.agentId/version required';
   if (typeof node.action?.type !== 'string') return 'action.type required';
+  if (!Object.prototype.hasOwnProperty.call(node, 'parents')) return 'parents is required';
   if (!Array.isArray(node.parents)) return 'parents must be an array';
   for (const p of node.parents) if (typeof p !== 'string' || !HEX64.test(p)) return `parent is not a lowercase hex SHA-256 nodeId: ${p}`;
   if (new Set(node.parents).size !== node.parents.length) return 'duplicate parent nodeId';
@@ -238,6 +456,10 @@ export function validate(opts) {
     let ok = true;
     const s = structuralError(node);
     if (s) { sets.invalid.add(id); note(id, `structural: ${s}`); ok = false; }
+    if (ok) {
+      const ij = ijsonError(node);
+      if (ij) { sets.invalid.add(id); note(id, ij); ok = false; }
+    }
     let recomputed;
     if (ok) {
       try { recomputed = computeNodeId(node); } catch (e) { sets.invalid.add(id); note(id, `canonicalization failed: ${e.message}`); ok = false; }

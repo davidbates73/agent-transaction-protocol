@@ -104,6 +104,145 @@ def canonicalize(value) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Section 9 / RFC 7493 I-JSON gate
+# ---------------------------------------------------------------------------
+
+_MAX_SAFE = (1 << 53) - 1  # 9007199254740991
+
+
+def has_unpaired_surrogate(s: str) -> bool:
+    """True if s contains an unpaired UTF-16 surrogate code unit."""
+    i = 0
+    while i < len(s):
+        o = ord(s[i])
+        if 0xD800 <= o <= 0xDBFF:
+            if i + 1 < len(s) and 0xDC00 <= ord(s[i + 1]) <= 0xDFFF:
+                i += 2
+                continue
+            return True
+        if 0xDC00 <= o <= 0xDFFF:
+            return True
+        i += 1
+    return False
+
+
+def ijson_error(value) -> Optional[str]:
+    """Deep I-JSON check; return reason or None."""
+    if isinstance(value, str):
+        return "I-JSON: unpaired surrogate in string" if has_unpaired_surrogate(value) else None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        if abs(value) > _MAX_SAFE:
+            return "I-JSON: integer outside ±(2^53-1)"
+        return None
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return "I-JSON: non-finite number"
+        # Integer-valued floats outside the safe range (e.g. 1e21)
+        if value.is_integer() and abs(value) > _MAX_SAFE:
+            return "I-JSON: integer outside ±(2^53-1)"
+        return None
+    if isinstance(value, list):
+        for v in value:
+            e = ijson_error(v)
+            if e:
+                return e
+        return None
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if has_unpaired_surrogate(k):
+                return "I-JSON: unpaired surrogate in member name"
+            e = ijson_error(v)
+            if e:
+                return e
+    return None
+
+
+def _reject_bad_number_tokens(text: str) -> None:
+    """Scan raw JSON number tokens (outside strings) for I-JSON violations."""
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == '"':
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == '"':
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "-" or "0" <= c <= "9":
+            if i > 0 and text[i - 1].isalnum():
+                i += 1
+                continue
+            start = i
+            if text[i] == "-":
+                i += 1
+            while i < n and "0" <= text[i] <= "9":
+                i += 1
+            is_int = True
+            if i < n and text[i] == ".":
+                is_int = False
+                i += 1
+                while i < n and "0" <= text[i] <= "9":
+                    i += 1
+            if i < n and text[i] in "eE":
+                is_int = False
+                i += 1
+                if i < n and text[i] in "+-":
+                    i += 1
+                while i < n and "0" <= text[i] <= "9":
+                    i += 1
+            tok = text[start:i]
+            try:
+                # Non-finite / out of double range
+                f = float(tok)
+            except OverflowError:
+                raise ValueError(f"I-JSON: number outside IEEE-754 double: {tok}") from None
+            if not math.isfinite(f):
+                raise ValueError(f"I-JSON: number outside IEEE-754 double: {tok}")
+            if is_int:
+                bi = int(tok)
+                if abs(bi) > _MAX_SAFE:
+                    raise ValueError(f"I-JSON: integer outside ±(2^53-1): {tok}")
+            continue
+        i += 1
+
+
+def parse_atp_json(text: str):
+    """Parse JSON as I-JSON for ATP: reject duplicate names, unpaired surrogates, bad numbers."""
+    if not isinstance(text, str):
+        raise TypeError("parse_atp_json: text must be a string")
+
+    def check_pairs(pairs):
+        seen = set()
+        out = {}
+        for k, v in pairs:
+            if k in seen:
+                raise ValueError(f"I-JSON: duplicate member name: {json.dumps(k)}")
+            seen.add(k)
+            out[k] = v
+        return out
+
+    _reject_bad_number_tokens(text)
+    # parse_constant catches Infinity/NaN literals if ever emitted
+    try:
+        value = json.loads(text, object_pairs_hook=check_pairs, parse_constant=lambda c: (_ for _ in ()).throw(
+            ValueError(f"I-JSON: non-finite number: {c}")
+        ))
+    except json.JSONDecodeError as e:
+        raise ValueError(f"JSON: {e}") from e
+    err = ijson_error(value)
+    if err:
+        raise ValueError(err)
+    return value
+
+
+# ---------------------------------------------------------------------------
 # Section 10.1: node identity
 # ---------------------------------------------------------------------------
 
@@ -353,6 +492,8 @@ def structural_error(node) -> Optional[str]:
         return "agent.agentId/version required"
     if not (isinstance(act, dict) and isinstance(act.get("type"), str)):
         return "action.type required"
+    if "parents" not in node:
+        return "parents is required"
     parents = node.get("parents")
     if not isinstance(parents, list):
         return "parents must be an array"
@@ -406,6 +547,10 @@ def validate(
         err = structural_error(n)
         if err:
             S["invalid"].add(i); note(i, f"structural: {err}"); ok = False
+        if ok:
+            ij = ijson_error(n)
+            if ij:
+                S["invalid"].add(i); note(i, ij); ok = False
         if ok:
             try:
                 rid = compute_node_id(n)

@@ -375,6 +375,117 @@
       "valid": false
     }
   ],
+  "ijson": [
+    {
+      "id": "J1",
+      "status": "proposed-01",
+      "description": "duplicate member name at top level; MUST reject",
+      "inputJson": "{\"a\":1,\"a\":2}",
+      "expectReject": true
+    },
+    {
+      "id": "J2",
+      "status": "proposed-01",
+      "description": "duplicate member name nested in object; MUST reject",
+      "inputJson": "{\"o\":{\"a\":1,\"a\":2}}",
+      "expectReject": true
+    },
+    {
+      "id": "J3",
+      "status": "proposed-01",
+      "description": "unpaired surrogate \\ud800 in string; MUST reject at parse",
+      "inputJson": "{\"s\":\"\\ud800\"}",
+      "expectReject": true
+    },
+    {
+      "id": "J4",
+      "status": "proposed-01",
+      "description": "integer 9007199254740993 outside ±(2^53-1); MUST reject (raw token)",
+      "inputJson": "{\"n\":9007199254740993}",
+      "expectReject": true
+    },
+    {
+      "id": "J5",
+      "status": "proposed-01",
+      "description": "number 1e400 outside IEEE-754 double; MUST reject",
+      "inputJson": "{\"n\":1e400}",
+      "expectReject": true
+    }
+  ],
+  "structural": [
+    {
+      "id": "P1",
+      "status": "proposed-01",
+      "description": "missing parents member; MUST reject",
+      "node": {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "test-scope-001",
+        "issuer": {
+          "issuerId": "test-issuer",
+          "keyId": "test-key-1"
+        },
+        "agent": {
+          "agentId": "test-agent",
+          "version": "1.0.0"
+        },
+        "action": {
+          "type": "atp:request"
+        },
+        "signature": "x"
+      },
+      "expectError": true,
+      "error": "parents is required"
+    },
+    {
+      "id": "P2",
+      "status": "proposed-01",
+      "description": "uppercase hex in parents; MUST reject",
+      "node": {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "test-scope-001",
+        "issuer": {
+          "issuerId": "test-issuer",
+          "keyId": "test-key-1"
+        },
+        "agent": {
+          "agentId": "test-agent",
+          "version": "1.0.0"
+        },
+        "action": {
+          "type": "atp:request"
+        },
+        "signature": "x",
+        "parents": [
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        ]
+      },
+      "expectError": true,
+      "error": "parent is not a lowercase hex SHA-256 nodeId: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "id": "P3",
+      "status": "proposed-01",
+      "description": "empty parents array is valid structurally",
+      "node": {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "test-scope-001",
+        "issuer": {
+          "issuerId": "test-issuer",
+          "keyId": "test-key-1"
+        },
+        "agent": {
+          "agentId": "test-agent",
+          "version": "1.0.0"
+        },
+        "action": {
+          "type": "atp:request"
+        },
+        "signature": "x",
+        "parents": []
+      },
+      "expectError": false
+    }
+  ],
   "signedNodes": {
     "V1": {
       "nodeId": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",

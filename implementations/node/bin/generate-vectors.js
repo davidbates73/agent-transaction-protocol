@@ -10,6 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   canonicalize, computeNodeId, keyPairFromSeed, signNodeId, nodeContent, isAtpTimestamp,
+  parseAtpJson, structuralError,
 } from '../src/atp.js';
 import crypto from 'node:crypto';
 
@@ -214,6 +215,49 @@ for (const tcase of timestampFormat) {
   if (got !== tcase.valid) throw new Error(`${tcase.id}: isAtpTimestamp=${got}, expected ${tcase.valid}`);
 }
 
+// ---- I-JSON / structural rejects ----------------------------------------
+function expectParseReject(id, text) {
+  try { parseAtpJson(text); throw new Error(`${id}: expected parseAtpJson to reject`); }
+  catch (e) { if (String(e.message).startsWith(`${id}:`)) throw e; }
+}
+function expectParseAccept(id, text) {
+  try { return parseAtpJson(text); }
+  catch (e) { throw new Error(`${id}: expected accept, got ${e.message}`); }
+}
+expectParseAccept('J0', '{"a":1}');
+expectParseReject('J1', '{"a":1,"a":2}');
+expectParseReject('J2', '{"o":{"a":1,"a":2}}');
+expectParseReject('J3', '{"s":"\\ud800"}');
+expectParseReject('J4', '{"n":9007199254740993}');
+expectParseReject('J5', '{"n":1e400}');
+expectParseAccept('Jpair', '{"s":"\\uD800\\uDC00"}');
+
+const ijson = [
+  { id: 'J1', status: 'proposed-01', description: 'duplicate member name at top level; MUST reject', inputJson: '{"a":1,"a":2}', expectReject: true },
+  { id: 'J2', status: 'proposed-01', description: 'duplicate member name nested in object; MUST reject', inputJson: '{"o":{"a":1,"a":2}}', expectReject: true },
+  { id: 'J3', status: 'proposed-01', description: 'unpaired surrogate \\ud800 in string; MUST reject at parse', inputJson: '{"s":"\\ud800"}', expectReject: true },
+  { id: 'J4', status: 'proposed-01', description: 'integer 9007199254740993 outside ±(2^53-1); MUST reject (raw token)', inputJson: '{"n":9007199254740993}', expectReject: true },
+  { id: 'J5', status: 'proposed-01', description: 'number 1e400 outside IEEE-754 double; MUST reject', inputJson: '{"n":1e400}', expectReject: true },
+];
+
+const baseStruct = {
+  timestamp: '2026-01-01T00:00:00Z', scope: 'test-scope-001',
+  issuer: { issuerId: 'test-issuer', keyId: 'test-key-1' },
+  agent: { agentId: 'test-agent', version: '1.0.0' },
+  action: { type: 'atp:request' }, signature: 'x',
+};
+const structural = [
+  { id: 'P1', status: 'proposed-01', description: 'missing parents member; MUST reject', node: { ...baseStruct }, expectError: true },
+  { id: 'P2', status: 'proposed-01', description: 'uppercase hex in parents; MUST reject', node: { ...baseStruct, parents: ['AA'.repeat(32)] }, expectError: true },
+  { id: 'P3', status: 'proposed-01', description: 'empty parents array is valid structurally', node: { ...baseStruct, parents: [] }, expectError: false },
+];
+for (const s of structural) {
+  const err = structuralError(s.node);
+  const rejected = err !== null;
+  if (rejected !== s.expectError) throw new Error(`${s.id}: structuralError=${err}, expectError=${s.expectError}`);
+  if (err) s.error = err;
+}
+
 const doc = {
   title: 'ATP Core Test Vectors (machine-readable)',
   source: 'draft-bates-atp-test-vectors-00; entries marked proposed-01 are candidates for draft-bates-atp-test-vectors-01',
@@ -232,6 +276,8 @@ const doc = {
   signatures,
   negative,
   timestampFormat,
+  ijson,
+  structural,
   signedNodes: { ...signed, 'V2-tampered': V2tampered },
   validation,
 };
