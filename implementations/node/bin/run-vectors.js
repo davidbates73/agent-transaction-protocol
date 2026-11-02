@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   canonicalize, computeNodeId, nodeContent, keyPairFromSeed, signNodeId,
   verifyNodeId, publicKeyFromRaw, validate, keyResolver, indexNodes, isAtpTimestamp,
-  parseAtpJson, structuralError,
+  parseAtpJson, structuralError, isAtpPayloadHash,
 } from '../src/atp.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -74,6 +74,11 @@ console.log('\nStructural rejects');
 for (const s of V.structural ?? []) {
   const err = structuralError(s.node);
   check(s.id, s.status, s.description, (err !== null) === !!s.expectError, err || '');
+}
+
+console.log('\nPayload hash format');
+for (const h of V.payloadHashFormat ?? []) {
+  check(h.id, h.status, h.description, isAtpPayloadHash(h.value) === h.valid);
 }
 
 console.log('\nNegative cases (MUST reject)');

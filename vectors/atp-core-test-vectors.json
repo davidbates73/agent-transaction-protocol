@@ -6,7 +6,7 @@
     "nodeId": "lowercase hex SHA-256 of canonical UTF-8 bytes, nodeId and signature removed first",
     "signatureMessage": "32 raw bytes of nodeId (bytes.fromhex(nodeId)), not the hex string",
     "signatureEncoding": "base64 (RFC 4648 §4, standard alphabet, padded)",
-    "payloadHashFormat": "\"sha256:\" + 64 lowercase hex chars (as used by -00 vectors)",
+    "payloadHashFormat": "\"sha256:\" + 64 lowercase hex; nodeId/parents stay bare lowercase hex; any other form rejected",
     "timestampFormat": "exactly 20 chars YYYY-MM-DDTHH:MM:SSZ (uppercase T/Z, no fraction; calendar-checked)",
     "validationResult": "§13.6 keys; \"lineageIncomplete\" is an implementation extension proposed for -01"
   },
@@ -484,6 +484,135 @@
         "parents": []
       },
       "expectError": false
+    },
+    {
+      "id": "H1",
+      "status": "proposed-01",
+      "description": "bare hex inputHash (no sha256: prefix); MUST reject",
+      "node": {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "test-scope-001",
+        "issuer": {
+          "issuerId": "test-issuer",
+          "keyId": "test-key-1"
+        },
+        "agent": {
+          "agentId": "test-agent",
+          "version": "1.0.0"
+        },
+        "action": {
+          "type": "atp:request",
+          "inputHash": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "signature": "x",
+        "parents": []
+      },
+      "expectError": true,
+      "error": "inputHash must be sha256: + 64 lowercase hex"
+    },
+    {
+      "id": "H2",
+      "status": "proposed-01",
+      "description": "uppercase hex in inputHash; MUST reject",
+      "node": {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "test-scope-001",
+        "issuer": {
+          "issuerId": "test-issuer",
+          "keyId": "test-key-1"
+        },
+        "agent": {
+          "agentId": "test-agent",
+          "version": "1.0.0"
+        },
+        "action": {
+          "type": "atp:request",
+          "inputHash": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        "signature": "x",
+        "parents": []
+      },
+      "expectError": true,
+      "error": "inputHash must be sha256: + 64 lowercase hex"
+    },
+    {
+      "id": "H3",
+      "status": "proposed-01",
+      "description": "unknown hash prefix sha512:; MUST reject",
+      "node": {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "test-scope-001",
+        "issuer": {
+          "issuerId": "test-issuer",
+          "keyId": "test-key-1"
+        },
+        "agent": {
+          "agentId": "test-agent",
+          "version": "1.0.0"
+        },
+        "action": {
+          "type": "atp:request",
+          "inputHash": "sha512:0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "signature": "x",
+        "parents": []
+      },
+      "expectError": true,
+      "error": "inputHash must be sha256: + 64 lowercase hex"
+    },
+    {
+      "id": "H4",
+      "status": "proposed-01",
+      "description": "valid sha256: lowercase inputHash",
+      "node": {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "test-scope-001",
+        "issuer": {
+          "issuerId": "test-issuer",
+          "keyId": "test-key-1"
+        },
+        "agent": {
+          "agentId": "test-agent",
+          "version": "1.0.0"
+        },
+        "action": {
+          "type": "atp:request",
+          "inputHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "signature": "x",
+        "parents": []
+      },
+      "expectError": false
+    }
+  ],
+  "payloadHashFormat": [
+    {
+      "id": "H5",
+      "status": "proposed-01",
+      "description": "valid payload hash form",
+      "value": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "valid": true
+    },
+    {
+      "id": "H6",
+      "status": "proposed-01",
+      "description": "bare hex is not a payload hash",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000",
+      "valid": false
+    },
+    {
+      "id": "H7",
+      "status": "proposed-01",
+      "description": "uppercase hex after sha256: is invalid",
+      "value": "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "valid": false
+    },
+    {
+      "id": "H8",
+      "status": "proposed-01",
+      "description": "sha512: prefix is invalid",
+      "value": "sha512:0000000000000000000000000000000000000000000000000000000000000000",
+      "valid": false
     }
   ],
   "signedNodes": {

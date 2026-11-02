@@ -396,6 +396,13 @@ export function formatAtpTimestamp(value = new Date()) {
 // ---------------------------------------------------------------------------
 
 const HEX64 = /^[0-9a-f]{64}$/;
+const PAYLOAD_HASH = /^sha256:[0-9a-f]{64}$/;
+
+/** True iff s is sha256: + 64 lowercase hex (payload hash form). */
+export function isAtpPayloadHash(s) {
+  return typeof s === 'string' && PAYLOAD_HASH.test(s);
+}
+
 
 /** Returns null if structurally OK, otherwise a reason string. */
 export function structuralError(node) {
@@ -410,6 +417,21 @@ export function structuralError(node) {
   for (const p of node.parents) if (typeof p !== 'string' || !HEX64.test(p)) return `parent is not a lowercase hex SHA-256 nodeId: ${p}`;
   if (new Set(node.parents).size !== node.parents.length) return 'duplicate parent nodeId';
   if (typeof node.signature !== 'string') return 'signature required';
+  const action = node.action;
+  if (action && typeof action === 'object') {
+    for (const f of ['inputHash', 'outputHash']) {
+      if (action[f] !== undefined && action[f] !== null) {
+        if (!isAtpPayloadHash(action[f])) {
+          return `${f} must be sha256: + 64 lowercase hex`;
+        }
+      }
+    }
+  }
+  if (node.nodeId !== undefined && node.nodeId !== null) {
+    if (typeof node.nodeId !== 'string' || !HEX64.test(node.nodeId)) {
+      return 'nodeId must be 64 lowercase hex characters (unprefixed)';
+    }
+  }
   return null;
 }
 

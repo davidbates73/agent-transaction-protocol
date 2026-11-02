@@ -475,6 +475,12 @@ def format_atp_timestamp(value=None) -> str:
 # ---------------------------------------------------------------------------
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_PAYLOAD_HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def is_atp_payload_hash(s: str) -> bool:
+    return isinstance(s, str) and bool(_PAYLOAD_HASH.fullmatch(s))
+
 
 
 def structural_error(node) -> Optional[str]:
@@ -504,6 +510,15 @@ def structural_error(node) -> Optional[str]:
         return "duplicate parent nodeId"
     if not isinstance(node.get("signature"), str):
         return "signature required"
+    action = node.get("action")
+    if isinstance(action, dict):
+        for f in ("inputHash", "outputHash"):
+            if f in action and action[f] is not None:
+                if not is_atp_payload_hash(action[f]):
+                    return f"{f} must be sha256: + 64 lowercase hex"
+    if "nodeId" in node and node["nodeId"] is not None:
+        if not (isinstance(node["nodeId"], str) and _HEX64.fullmatch(node["nodeId"])):
+            return "nodeId must be 64 lowercase hex characters (unprefixed)"
     return None
 
 

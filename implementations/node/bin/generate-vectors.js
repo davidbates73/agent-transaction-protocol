@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   canonicalize, computeNodeId, keyPairFromSeed, signNodeId, nodeContent, isAtpTimestamp,
-  parseAtpJson, structuralError,
+  parseAtpJson, structuralError, isAtpPayloadHash,
 } from '../src/atp.js';
 import crypto from 'node:crypto';
 
@@ -246,16 +246,31 @@ const baseStruct = {
   agent: { agentId: 'test-agent', version: '1.0.0' },
   action: { type: 'atp:request' }, signature: 'x',
 };
+const bareHex = '0'.repeat(64);
 const structural = [
   { id: 'P1', status: 'proposed-01', description: 'missing parents member; MUST reject', node: { ...baseStruct }, expectError: true },
   { id: 'P2', status: 'proposed-01', description: 'uppercase hex in parents; MUST reject', node: { ...baseStruct, parents: ['AA'.repeat(32)] }, expectError: true },
   { id: 'P3', status: 'proposed-01', description: 'empty parents array is valid structurally', node: { ...baseStruct, parents: [] }, expectError: false },
+  { id: 'H1', status: 'proposed-01', description: 'bare hex inputHash (no sha256: prefix); MUST reject', node: { ...baseStruct, parents: [], action: { type: 'atp:request', inputHash: bareHex } }, expectError: true },
+  { id: 'H2', status: 'proposed-01', description: 'uppercase hex in inputHash; MUST reject', node: { ...baseStruct, parents: [], action: { type: 'atp:request', inputHash: 'sha256:' + 'A'.repeat(64) } }, expectError: true },
+  { id: 'H3', status: 'proposed-01', description: 'unknown hash prefix sha512:; MUST reject', node: { ...baseStruct, parents: [], action: { type: 'atp:request', inputHash: 'sha512:' + '0'.repeat(64) } }, expectError: true },
+  { id: 'H4', status: 'proposed-01', description: 'valid sha256: lowercase inputHash', node: { ...baseStruct, parents: [], action: { type: 'atp:request', inputHash: 'sha256:' + bareHex } }, expectError: false },
 ];
 for (const s of structural) {
   const err = structuralError(s.node);
   const rejected = err !== null;
   if (rejected !== s.expectError) throw new Error(`${s.id}: structuralError=${err}, expectError=${s.expectError}`);
   if (err) s.error = err;
+}
+
+const payloadHashFormat = [
+  { id: 'H5', status: 'proposed-01', description: 'valid payload hash form', value: 'sha256:' + bareHex, valid: true },
+  { id: 'H6', status: 'proposed-01', description: 'bare hex is not a payload hash', value: bareHex, valid: false },
+  { id: 'H7', status: 'proposed-01', description: 'uppercase hex after sha256: is invalid', value: 'sha256:' + 'A'.repeat(64), valid: false },
+  { id: 'H8', status: 'proposed-01', description: 'sha512: prefix is invalid', value: 'sha512:' + bareHex, valid: false },
+];
+for (const h of payloadHashFormat) {
+  if (isAtpPayloadHash(h.value) !== h.valid) throw new Error(`${h.id}: isAtpPayloadHash mismatch`);
 }
 
 const doc = {
@@ -266,7 +281,7 @@ const doc = {
     nodeId: 'lowercase hex SHA-256 of canonical UTF-8 bytes, nodeId and signature removed first',
     signatureMessage: '32 raw bytes of nodeId (bytes.fromhex(nodeId)), not the hex string',
     signatureEncoding: 'base64 (RFC 4648 §4, standard alphabet, padded)',
-    payloadHashFormat: '"sha256:" + 64 lowercase hex chars (as used by -00 vectors)',
+    payloadHashFormat: '"sha256:" + 64 lowercase hex; nodeId/parents stay bare lowercase hex; any other form rejected',
     timestampFormat: 'exactly 20 chars YYYY-MM-DDTHH:MM:SSZ (uppercase T/Z, no fraction; calendar-checked)',
     validationResult: '§13.6 keys; "lineageIncomplete" is an implementation extension proposed for -01',
   },
@@ -278,6 +293,7 @@ const doc = {
   timestampFormat,
   ijson,
   structural,
+  payloadHashFormat,
   signedNodes: { ...signed, 'V2-tampered': V2tampered },
   validation,
 };

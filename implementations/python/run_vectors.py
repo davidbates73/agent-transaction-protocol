@@ -80,6 +80,10 @@ for s in V.get("structural", []):
     err = atp.structural_error(s["node"])
     check(s["id"], s["status"], s["description"], (err is not None) == bool(s["expectError"]), err or "")
 
+print("\nPayload hash format")
+for h in V.get("payloadHashFormat", []):
+    check(h["id"], h["status"], h["description"], atp.is_atp_payload_hash(h["value"]) == h["valid"])
+
 print("\nNegative cases (MUST reject)")
 for n in V["negative"]:
     pk = bytes.fromhex(n["publicKeyHex"]) if n.get("publicKeyHex") else pubs[n["key"]]
