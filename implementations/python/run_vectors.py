@@ -91,19 +91,17 @@ for n in V["negative"]:
     check(n["id"], n["status"], n["description"], got == n["expectVerify"])
 
 print("\nValidation modes and §13.6 result format")
-cats = ["verified", "invalid", "unresolved", "withheld", "outOfHorizon", "keyUnresolved", "profileUnresolved"]
+cats = ["verified", "invalid", "unresolved", "withheld", "outOfHorizon", "keyUnresolved", "profileUnresolved", "lineageIncomplete"]
 all_keys = {f"{k['issuerId']}|{name}": k["publicKeyBase64"] for name, k in V["keys"].items()}
 for r in V["validation"]:
     keys = {k: v for k, v in all_keys.items() if k.split("|")[1] in r["keys"]}
     nodes = atp.index_nodes(V["signedNodes"][ref] for ref in r["nodes"])
     got = atp.validate(r["targets"], nodes, atp.key_resolver(keys), mode=r["mode"], boundary=r.get("boundary"),
                        withheld=r.get("withheld", []), strict_profiles=r.get("strictProfiles", False))
-    ok = got["mode"] == r["mode"] and all(sorted(got[c]) == sorted(r["expected"][c]) for c in cats)
+    ok = got["mode"] == r["mode"] and all(sorted(got[c]) == sorted(r["expected"].get(c, [])) for c in cats)
     if r.get("boundary"):
         ok = ok and got["boundary"] == r["expected"]["boundary"]
-    if r.get("expectedExtension"):
-        ok = ok and sorted(got["lineageIncomplete"]) == sorted(r["expectedExtension"]["lineageIncomplete"])
-    bad = "" if ok else " ".join(f"{c}={[x[:8] for x in got[c]]}" for c in cats if sorted(got[c]) != sorted(r["expected"][c]))
+    bad = "" if ok else " ".join(f"{c}={[x[:8] for x in got[c]]}" for c in cats if sorted(got[c]) != sorted(r["expected"].get(c, [])))
     check(r["id"], r["status"], r["description"], ok, bad)
 
 colour = G if results["fail"] == 0 else R

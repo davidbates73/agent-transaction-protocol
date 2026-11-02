@@ -99,11 +99,10 @@ for (const r of V.validation) {
     mode: r.mode, boundary: r.boundary, targets: r.targets, nodes, withheld: r.withheld,
     resolveKey: keyResolver(keys), knownProfiles: [], strictProfiles: r.strictProfiles,
   });
-  const cats = ['verified', 'invalid', 'unresolved', 'withheld', 'outOfHorizon', 'keyUnresolved', 'profileUnresolved'];
-  let ok = got.mode === r.mode && cats.every((c) => Array.isArray(got[c]) && sameSet(got[c], r.expected[c]));
+  const cats = ['verified', 'invalid', 'unresolved', 'withheld', 'outOfHorizon', 'keyUnresolved', 'profileUnresolved', 'lineageIncomplete'];
+  let ok = got.mode === r.mode && cats.every((c) => Array.isArray(got[c]) && sameSet(got[c], r.expected[c] ?? []));
   if (r.boundary) ok &&= JSON.stringify(got.boundary) === JSON.stringify(r.expected.boundary);
-  if (r.expectedExtension) ok &&= sameSet(got.lineageIncomplete, r.expectedExtension.lineageIncomplete);
-  const mismatch = ok ? '' : cats.filter((c) => !sameSet(got[c], r.expected[c])).map((c) => `${c}=${JSON.stringify(got[c].map((x) => x.slice(0, 8)))}`).join(' ');
+  const mismatch = ok ? '' : cats.filter((c) => !sameSet(got[c], r.expected[c] ?? [])).map((c) => `${c}=${JSON.stringify(got[c].map((x) => x.slice(0, 8)))}`).join(' ');
   check(r.id, r.status, r.description, ok, mismatch);
 }
 

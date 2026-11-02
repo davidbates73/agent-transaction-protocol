@@ -43,6 +43,8 @@ const C = [
   ['C8', 'proposed-01', 'key sort by UTF-16 code units (differs from code-point order)', '{"\\uff61": 1, "\\ud83d\\ude00": 2, "a": 3}', null],
   ['C9', 'proposed-01', 'ECMAScript number serialization', '{"n": [1e21, 1e-7, 0.1, -0, 100, 1.5e300, 123456789012345680000, 4.50]}', null],
   ['C10', 'proposed-01', 'empty string, empty array, empty object values', '{"c": {}, "b": [], "a": ""}', null],
+  ['C11', 'proposed-01', 'null array element kept (not removed)', '{"a": [1, null, 2]}', '{"a":[1,null,2]}'],
+  ['C12', 'proposed-01', 'object emptied by null removal stays {}', '{"a": {"b": null}}', '{"a":{}}'],
 ];
 const canonicalization = C.map(([id, status, description, inputJson, expected]) => {
   const canonical = canonicalize(JSON.parse(inputJson));
@@ -75,7 +77,7 @@ const N = [
   ['V2', 'published-00', 'completion node with actor and parent reference', JSON.stringify(V2), id2],
   ['V3', 'published-00', 'same content as V1 with mis-ordered keys', V3json, id1],
   ['V4', 'published-00', 'fan-in decision with two parents', JSON.stringify(V4), id4],
-  ['V5', 'published-00', 'node with profile field', JSON.stringify(V5), id5],
+  ['V5', 'published-00', 'node with profile field (urn:ietf:params value is canonicalization-only; not a registered identifier; ATP defines no urn:ietf:params namespace)', JSON.stringify(V5), id5],
   ['V6', 'proposed-01', 'V1 with nodeId and signature present: both MUST be stripped (§10.1)', JSON.stringify(V6), id1],
   ['V7', 'proposed-01', 'V4 with parent order reversed: different nodeId (§8)', JSON.stringify(V7), null],
   ['V8', 'proposed-01', 'V1 with timestamp "+00:00" instead of "Z": same instant, different nodeId', JSON.stringify(V8), null],
@@ -180,19 +182,22 @@ const signed = {
   V5: { nodeId: id5, ...V5, signature: signatures[3].signatureBase64 },
 };
 const V2tampered = { ...signed.V2, action: { ...signed.V2.action, outputHash: Z(9) } };
-const empty = { verified: [], invalid: [], unresolved: [], withheld: [], outOfHorizon: [], keyUnresolved: [], profileUnresolved: [] };
+const V1tampered = { ...signed.V1, action: { ...signed.V1.action, inputHash: Z(9) } };
+const empty = { verified: [], invalid: [], unresolved: [], withheld: [], outOfHorizon: [], keyUnresolved: [], profileUnresolved: [], lineageIncomplete: [] };
 const R = (o) => ({ status: 'proposed-01', ...o, expected: { ...empty, ...o.expected } });
 const validation = [
   R({ id: 'R1', description: 'full recursive validation of V4 with all heritage and keys', mode: 'full', targets: [id4], nodes: ['V1', 'V2', 'V4'], keys: ['test-key-1', 'test-key-2'], expected: { verified: [id1, id2, id4].sort() } }),
-  R({ id: 'R2', description: 'tip validation of V4 alone: parents are not resolved', mode: 'tip', targets: [id4], nodes: ['V4'], keys: ['test-key-2'], expected: { verified: [id4] } }),
-  R({ id: 'R3', description: 'full validation with V1 absent: V1 unresolved, V2 and V4 lineage not established', mode: 'full', targets: [id4], nodes: ['V2', 'V4'], keys: ['test-key-1', 'test-key-2'], expected: { unresolved: [id1] }, expectedExtension: { lineageIncomplete: [id2, id4].sort() } }),
-  R({ id: 'R4', description: 'redacted-lineage validation with V1 declared withheld: gap reported, visible nodes verified', mode: 'redacted', targets: [id4], nodes: ['V2', 'V4'], withheld: [id1], keys: ['test-key-1', 'test-key-2'], expected: { verified: [id2, id4].sort(), withheld: [id1] }, expectedExtension: { lineageIncomplete: [] } }),
-  R({ id: 'R10', description: 'full validation with V1 declared withheld and absent: withheld, lineage not established', mode: 'full', targets: [id4], nodes: ['V2', 'V4'], withheld: [id1], keys: ['test-key-1', 'test-key-2'], expected: { withheld: [id1] }, expectedExtension: { lineageIncomplete: [id2, id4].sort() } }),
+  R({ id: 'R2', description: 'tip validation of V4 alone: parents are not resolved; tip never reports lineageIncomplete', mode: 'tip', targets: [id4], nodes: ['V4'], keys: ['test-key-2'], expected: { verified: [id4], lineageIncomplete: [] } }),
+  R({ id: 'R3', description: 'full validation with V1 absent: V1 unresolved, V2 and V4 lineageIncomplete (not verified)', mode: 'full', targets: [id4], nodes: ['V2', 'V4'], keys: ['test-key-1', 'test-key-2'], expected: { unresolved: [id1], lineageIncomplete: [id2, id4].sort() } }),
+  R({ id: 'R4', description: 'redacted mode with V1 declared withheld: withheld gap OK, children verified, NOT lineageIncomplete', mode: 'redacted', targets: [id4], nodes: ['V2', 'V4'], withheld: [id1], keys: ['test-key-1', 'test-key-2'], expected: { verified: [id2, id4].sort(), withheld: [id1], lineageIncomplete: [] } }),
+  R({ id: 'R10', description: 'full validation with V1 declared withheld and absent: withheld, children lineageIncomplete', mode: 'full', targets: [id4], nodes: ['V2', 'V4'], withheld: [id1], keys: ['test-key-1', 'test-key-2'], expected: { withheld: [id1], lineageIncomplete: [id2, id4].sort() } }),
   R({ id: 'R5', description: 'full validation without test-key-2: V4 keyUnresolved (not invalid)', mode: 'full', targets: [id4], nodes: ['V1', 'V2', 'V4'], keys: ['test-key-1'], expected: { verified: [id1, id2].sort(), keyUnresolved: [id4] } }),
   R({ id: 'R6', description: 'bounded validation, depth 0: parents reported outOfHorizon', mode: 'bounded', boundary: { depth: 0 }, targets: [id4], nodes: ['V1', 'V2', 'V4'], keys: ['test-key-1', 'test-key-2'], expected: { verified: [id4], outOfHorizon: [id1, id2].sort() } }),
-  R({ id: 'R7', description: 'full validation with V2 tampered after signing (outputHash changed)', mode: 'full', targets: [id4], nodes: ['V1', 'V2-tampered', 'V4'], keys: ['test-key-1', 'test-key-2'], expected: { verified: [id1], invalid: [id2] }, expectedExtension: { lineageIncomplete: [id4] } }),
-  R({ id: 'R8', description: 'tip validation of V5, unknown profile, permissive', mode: 'tip', targets: [id5], nodes: ['V5'], keys: ['test-key-1'], strictProfiles: false, expected: { verified: [id5], profileUnresolved: [id5] } }),
-  R({ id: 'R9', description: 'tip validation of V5, unknown profile, strict', mode: 'tip', targets: [id5], nodes: ['V5'], keys: ['test-key-1'], strictProfiles: true, expected: { invalid: [id5], profileUnresolved: [id5] } }),
+  R({ id: 'R7', description: 'full validation with V2 tampered: V4 lineageIncomplete (not verified)', mode: 'full', targets: [id4], nodes: ['V1', 'V2-tampered', 'V4'], keys: ['test-key-1', 'test-key-2'], expected: { verified: [id1], invalid: [id2], lineageIncomplete: [id4] } }),
+  R({ id: 'R11', description: 'redacted mode with V1 present but invalid (tampered): children lineageIncomplete, not verified', mode: 'redacted', targets: [id4], nodes: ['V1-tampered', 'V2', 'V4'], keys: ['test-key-1', 'test-key-2'], expected: { invalid: [id1], lineageIncomplete: [id2, id4].sort() } }),
+  R({ id: 'R12', description: 'tip mode with broken heritage available: tip still verified, lineageIncomplete empty', mode: 'tip', targets: [id4], nodes: ['V1', 'V2-tampered', 'V4'], keys: ['test-key-1', 'test-key-2'], expected: { verified: [id4], lineageIncomplete: [] } }),
+  R({ id: 'R8', description: 'tip validation of V5, unknown profile, permissive', mode: 'tip', targets: [id5], nodes: ['V5'], keys: ['test-key-1'], strictProfiles: false, expected: { verified: [id5], profileUnresolved: [id5], lineageIncomplete: [] } }),
+  R({ id: 'R9', description: 'tip validation of V5, unknown profile, strict', mode: 'tip', targets: [id5], nodes: ['V5'], keys: ['test-key-1'], strictProfiles: true, expected: { invalid: [id5], profileUnresolved: [id5], lineageIncomplete: [] } }),
 ];
 for (const r of validation) if (r.boundary) r.expected.boundary = r.boundary;
 
@@ -283,7 +288,7 @@ const doc = {
     signatureEncoding: 'base64 (RFC 4648 §4, standard alphabet, padded)',
     payloadHashFormat: '"sha256:" + 64 lowercase hex; nodeId/parents stay bare lowercase hex; any other form rejected',
     timestampFormat: 'exactly 20 chars YYYY-MM-DDTHH:MM:SSZ (uppercase T/Z, no fraction; calendar-checked)',
-    validationResult: '§13.6 keys; "lineageIncomplete" is an implementation extension proposed for -01',
+    validationResult: '§13.6 keys including lineageIncomplete (disjoint from verified; empty in tip mode)',
   },
   keys,
   canonicalization,
@@ -294,7 +299,7 @@ const doc = {
   ijson,
   structural,
   payloadHashFormat,
-  signedNodes: { ...signed, 'V2-tampered': V2tampered },
+  signedNodes: { ...signed, 'V2-tampered': V2tampered, 'V1-tampered': V1tampered },
   validation,
 };
 fs.writeFileSync(out, JSON.stringify(doc, null, 2) + '\n');

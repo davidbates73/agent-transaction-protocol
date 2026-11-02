@@ -545,7 +545,7 @@ def validate(
     if mode == "bounded" and not boundary:
         raise ValueError("bounded mode requires a boundary")
     withheld, known = set(withheld), set(known_profiles)
-    cats = ["verified", "invalid", "unresolved", "withheld", "outOfHorizon", "keyUnresolved", "profileUnresolved"]
+    cats = ["verified", "invalid", "unresolved", "withheld", "outOfHorizon", "keyUnresolved", "profileUnresolved", "lineageIncomplete"]
     S = {c: set() for c in cats}
     relay: Dict[str, str] = {}
     details: Dict[str, List[str]] = {}
@@ -642,14 +642,13 @@ def validate(
     for t in targets:
         visit(t, 0, set())
 
-    incomplete = set()
     for i, ok in node_ok.items():
         if not ok:
             continue
         if mode == "tip" or lineage_ok.get(i):
             S["verified"].add(i)
         else:
-            incomplete.add(i)
+            S["lineageIncomplete"].add(i)
 
     result: dict = {"mode": mode}
     if mode == "bounded":
@@ -658,7 +657,6 @@ def validate(
         result[c] = sorted(S[c])
     if relay:
         result["relayFidelity"] = relay
-    result["lineageIncomplete"] = sorted(incomplete)
     result["details"] = details
     return result
 

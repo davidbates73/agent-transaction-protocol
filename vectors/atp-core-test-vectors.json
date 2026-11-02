@@ -8,7 +8,7 @@
     "signatureEncoding": "base64 (RFC 4648 §4, standard alphabet, padded)",
     "payloadHashFormat": "\"sha256:\" + 64 lowercase hex; nodeId/parents stay bare lowercase hex; any other form rejected",
     "timestampFormat": "exactly 20 chars YYYY-MM-DDTHH:MM:SSZ (uppercase T/Z, no fraction; calendar-checked)",
-    "validationResult": "§13.6 keys; \"lineageIncomplete\" is an implementation extension proposed for -01"
+    "validationResult": "§13.6 keys including lineageIncomplete (disjoint from verified; empty in tip mode)"
   },
   "keys": {
     "test-key-1": {
@@ -116,6 +116,24 @@
       "canonical": "{\"a\":\"\",\"b\":[],\"c\":{}}",
       "canonicalHex": "7b2261223a22222c2262223a5b5d2c2263223a7b7d7d",
       "length": 22
+    },
+    {
+      "id": "C11",
+      "status": "proposed-01",
+      "description": "null array element kept (not removed)",
+      "inputJson": "{\"a\": [1, null, 2]}",
+      "canonical": "{\"a\":[1,null,2]}",
+      "canonicalHex": "7b2261223a5b312c6e756c6c2c325d7d",
+      "length": 16
+    },
+    {
+      "id": "C12",
+      "status": "proposed-01",
+      "description": "object emptied by null removal stays {}",
+      "inputJson": "{\"a\": {\"b\": null}}",
+      "canonical": "{\"a\":{}}",
+      "canonicalHex": "7b2261223a7b7d7d",
+      "length": 8
     }
   ],
   "nodeId": [
@@ -154,7 +172,7 @@
     {
       "id": "V5",
       "status": "published-00",
-      "description": "node with profile field",
+      "description": "node with profile field (urn:ietf:params value is canonicalization-only; not a registered identifier; ATP defines no urn:ietf:params namespace)",
       "inputJson": "{\"timestamp\":\"2026-01-01T00:00:03Z\",\"scope\":\"test-scope-001\",\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"action\":{\"type\":\"atp:request\",\"inputHash\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\"},\"parents\":[],\"profile\":\"urn:ietf:params:atp:profile:test:1.0\"}",
       "canonical": "{\"action\":{\"inputHash\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\",\"type\":\"atp:request\"},\"agent\":{\"agentId\":\"test-agent\",\"version\":\"1.0.0\"},\"issuer\":{\"issuerId\":\"test-issuer\",\"keyId\":\"test-key-1\"},\"parents\":[],\"profile\":\"urn:ietf:params:atp:profile:test:1.0\",\"scope\":\"test-scope-001\",\"timestamp\":\"2026-01-01T00:00:03Z\"}",
       "nodeId": "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803"
@@ -729,6 +747,25 @@
         "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
       ],
       "signature": "4g+Wbv9Tx4FEo10JMKlF6sWpAYMICcpUTioAGTCWSwgzx0DjRYB+yILCYqtFbEJbUEQU8hrL1AhEWXXdEAjbDA=="
+    },
+    "V1-tampered": {
+      "nodeId": "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70",
+      "timestamp": "2026-01-01T00:00:00Z",
+      "scope": "test-scope-001",
+      "issuer": {
+        "issuerId": "test-issuer",
+        "keyId": "test-key-1"
+      },
+      "agent": {
+        "agentId": "test-agent",
+        "version": "1.0.0"
+      },
+      "action": {
+        "type": "atp:request",
+        "inputHash": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "parents": [],
+      "signature": "P02ft1arqbyhHPrBXWXYJEHb9vaa3JulJ7UGwzeYVVAKLvGk5HEyPy6MjRkIaOT17zA77x4+V+GYixtG2D1VCQ=="
     }
   },
   "validation": [
@@ -760,13 +797,14 @@
         "withheld": [],
         "outOfHorizon": [],
         "keyUnresolved": [],
-        "profileUnresolved": []
+        "profileUnresolved": [],
+        "lineageIncomplete": []
       }
     },
     {
       "status": "proposed-01",
       "id": "R2",
-      "description": "tip validation of V4 alone: parents are not resolved",
+      "description": "tip validation of V4 alone: parents are not resolved; tip never reports lineageIncomplete",
       "mode": "tip",
       "targets": [
         "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
@@ -786,13 +824,14 @@
         "withheld": [],
         "outOfHorizon": [],
         "keyUnresolved": [],
-        "profileUnresolved": []
+        "profileUnresolved": [],
+        "lineageIncomplete": []
       }
     },
     {
       "status": "proposed-01",
       "id": "R3",
-      "description": "full validation with V1 absent: V1 unresolved, V2 and V4 lineage not established",
+      "description": "full validation with V1 absent: V1 unresolved, V2 and V4 lineageIncomplete (not verified)",
       "mode": "full",
       "targets": [
         "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
@@ -814,9 +853,7 @@
         "withheld": [],
         "outOfHorizon": [],
         "keyUnresolved": [],
-        "profileUnresolved": []
-      },
-      "expectedExtension": {
+        "profileUnresolved": [],
         "lineageIncomplete": [
           "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c",
           "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
@@ -826,7 +863,7 @@
     {
       "status": "proposed-01",
       "id": "R4",
-      "description": "redacted-lineage validation with V1 declared withheld: gap reported, visible nodes verified",
+      "description": "redacted mode with V1 declared withheld: withheld gap OK, children verified, NOT lineageIncomplete",
       "mode": "redacted",
       "targets": [
         "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
@@ -854,16 +891,14 @@
         ],
         "outOfHorizon": [],
         "keyUnresolved": [],
-        "profileUnresolved": []
-      },
-      "expectedExtension": {
+        "profileUnresolved": [],
         "lineageIncomplete": []
       }
     },
     {
       "status": "proposed-01",
       "id": "R10",
-      "description": "full validation with V1 declared withheld and absent: withheld, lineage not established",
+      "description": "full validation with V1 declared withheld and absent: withheld, children lineageIncomplete",
       "mode": "full",
       "targets": [
         "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
@@ -888,9 +923,7 @@
         ],
         "outOfHorizon": [],
         "keyUnresolved": [],
-        "profileUnresolved": []
-      },
-      "expectedExtension": {
+        "profileUnresolved": [],
         "lineageIncomplete": [
           "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c",
           "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
@@ -925,7 +958,8 @@
         "keyUnresolved": [
           "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
         ],
-        "profileUnresolved": []
+        "profileUnresolved": [],
+        "lineageIncomplete": []
       }
     },
     {
@@ -961,6 +995,7 @@
         ],
         "keyUnresolved": [],
         "profileUnresolved": [],
+        "lineageIncomplete": [],
         "boundary": {
           "depth": 0
         }
@@ -969,7 +1004,7 @@
     {
       "status": "proposed-01",
       "id": "R7",
-      "description": "full validation with V2 tampered after signing (outputHash changed)",
+      "description": "full validation with V2 tampered: V4 lineageIncomplete (not verified)",
       "mode": "full",
       "targets": [
         "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
@@ -994,12 +1029,73 @@
         "withheld": [],
         "outOfHorizon": [],
         "keyUnresolved": [],
-        "profileUnresolved": []
-      },
-      "expectedExtension": {
+        "profileUnresolved": [],
         "lineageIncomplete": [
           "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
         ]
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R11",
+      "description": "redacted mode with V1 present but invalid (tampered): children lineageIncomplete, not verified",
+      "mode": "redacted",
+      "targets": [
+        "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+      ],
+      "nodes": [
+        "V1-tampered",
+        "V2",
+        "V4"
+      ],
+      "keys": [
+        "test-key-1",
+        "test-key-2"
+      ],
+      "expected": {
+        "verified": [],
+        "invalid": [
+          "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70"
+        ],
+        "unresolved": [],
+        "withheld": [],
+        "outOfHorizon": [],
+        "keyUnresolved": [],
+        "profileUnresolved": [],
+        "lineageIncomplete": [
+          "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c",
+          "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e"
+        ]
+      }
+    },
+    {
+      "status": "proposed-01",
+      "id": "R12",
+      "description": "tip mode with broken heritage available: tip still verified, lineageIncomplete empty",
+      "mode": "tip",
+      "targets": [
+        "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+      ],
+      "nodes": [
+        "V1",
+        "V2-tampered",
+        "V4"
+      ],
+      "keys": [
+        "test-key-1",
+        "test-key-2"
+      ],
+      "expected": {
+        "verified": [
+          "25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c"
+        ],
+        "invalid": [],
+        "unresolved": [],
+        "withheld": [],
+        "outOfHorizon": [],
+        "keyUnresolved": [],
+        "profileUnresolved": [],
+        "lineageIncomplete": []
       }
     },
     {
@@ -1028,7 +1124,8 @@
         "keyUnresolved": [],
         "profileUnresolved": [
           "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803"
-        ]
+        ],
+        "lineageIncomplete": []
       }
     },
     {
@@ -1057,7 +1154,8 @@
         "keyUnresolved": [],
         "profileUnresolved": [
           "2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803"
-        ]
+        ],
+        "lineageIncomplete": []
       }
     }
   ]

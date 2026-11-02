@@ -560,25 +560,23 @@ export function validate(opts) {
 
   for (const t of opts.targets) visit(t, 0, new Set());
 
-  // verified: nodes that passed the checks applicable to the mode.
-  // INTERPRETATION (spec gap, see review): in full/bounded/redacted modes a
-  // node with node-level integrity but a broken lineage is NOT placed in
-  // "verified"; it is listed in the extension key "lineageIncomplete".
-  const lineageIncomplete = new Set();
+  // verified vs lineageIncomplete (§13.6): in full/bounded/redacted a node
+  // with node-level integrity but broken lineage is lineageIncomplete, never
+  // verified. Tip mode never populates lineageIncomplete.
+  sets.lineageIncomplete = new Set();
   for (const [id, ok] of nodeOk) {
     if (!ok) continue;
     if (mode === 'tip' || lineageOk.get(id)) sets.verified.add(id);
-    else lineageIncomplete.add(id);
+    else sets.lineageIncomplete.add(id);
   }
 
   const result = { mode };
   if (mode === 'bounded') result.boundary = { ...opts.boundary };
-  for (const k of ['verified', 'invalid', 'unresolved', 'withheld', 'outOfHorizon', 'keyUnresolved', 'profileUnresolved']) {
+  for (const k of ['verified', 'invalid', 'unresolved', 'withheld', 'outOfHorizon', 'keyUnresolved', 'profileUnresolved', 'lineageIncomplete']) {
     result[k] = [...sets[k]].sort();
   }
   if (Object.keys(relayFidelity).length) result.relayFidelity = relayFidelity;
-  result.lineageIncomplete = [...lineageIncomplete].sort(); // implementation extension
-  result.details = details;                                   // implementation extension
+  result.details = details; // implementation extension
   return result;
 }
 
