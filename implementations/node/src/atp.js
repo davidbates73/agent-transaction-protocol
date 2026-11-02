@@ -363,7 +363,7 @@ export function createNode(fields, privateKey) {
 // §8 Timestamp format (exactly 20 chars: YYYY-MM-DDTHH:MM:SSZ)
 // ---------------------------------------------------------------------------
 
-const ATP_TIMESTAMP_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$/;
+const ATP_TIMESTAMP_RE = /^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})Z$/;
 const _DAYS = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 function _isLeap(y) { return y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0); }
@@ -414,7 +414,7 @@ export function structuralError(node) {
   if (typeof node.action?.type !== 'string') return 'action.type required';
   if (!Object.prototype.hasOwnProperty.call(node, 'parents')) return 'parents is required';
   if (!Array.isArray(node.parents)) return 'parents must be an array';
-  for (const p of node.parents) if (typeof p !== 'string' || !HEX64.test(p)) return `parent is not a lowercase hex SHA-256 nodeId: ${p}`;
+  for (const p of node.parents) if (typeof p !== 'string' || p.length !== 64 || !HEX64.test(p)) return `parent is not a lowercase hex SHA-256 nodeId: ${p}`;
   if (new Set(node.parents).size !== node.parents.length) return 'duplicate parent nodeId';
   if (typeof node.signature !== 'string') return 'signature required';
   const action = node.action;
@@ -428,7 +428,7 @@ export function structuralError(node) {
     }
   }
   if (node.nodeId !== undefined && node.nodeId !== null) {
-    if (typeof node.nodeId !== 'string' || !HEX64.test(node.nodeId)) {
+    if (typeof node.nodeId !== 'string' || node.nodeId.length !== 64 || !HEX64.test(node.nodeId)) {
       return 'nodeId must be 64 lowercase hex characters (unprefixed)';
     }
   }
@@ -534,8 +534,14 @@ export function validate(opts) {
 
     stack.add(id);
     let parentsOk = true;
-    for (const p of Array.isArray(node.parents) ? node.parents : []) {
-      if (!visit(p, depth + 1, stack)) parentsOk = false;
+    // MUST NOT default missing/non-array parents to [] before/during validation.
+    if (!Array.isArray(node.parents)) {
+      parentsOk = false;
+      note(id, 'parents is absent or not an array');
+    } else {
+      for (const p of node.parents) {
+        if (!visit(p, depth + 1, stack)) parentsOk = false;
+      }
     }
     stack.delete(id);
 
@@ -600,6 +606,6 @@ export function indexNodes(nodes) {
 
 /** Nodes that no other node in the set references (the DAG tips). */
 export function tips(nodes) {
-  const referenced = new Set(nodes.flatMap((n) => n.parents ?? []));
+  const referenced = new Set(nodes.flatMap((n) => (Array.isArray(n.parents) ? n.parents : [])));
   return nodes.map((n) => n.nodeId ?? computeNodeId(n)).filter((id) => !referenced.has(id));
 }

@@ -391,6 +391,13 @@
       "description": "invalid calendar date 2026-02-30; MUST reject",
       "value": "2026-02-30T00:00:00Z",
       "valid": false
+    },
+    {
+      "id": "T10",
+      "status": "proposed-01",
+      "description": "Arabic-Indic digits in year; MUST reject (ASCII [0-9] only)",
+      "value": "٢٠٢٦-01-01T00:00:00Z",
+      "valid": false
     }
   ],
   "ijson": [
@@ -428,6 +435,13 @@
       "description": "number 1e400 outside IEEE-754 double; MUST reject",
       "inputJson": "{\"n\":1e400}",
       "expectReject": true
+    },
+    {
+      "id": "J6",
+      "status": "proposed-01",
+      "description": "ordinary decimal 1.5 is accepted (finite non-integer)",
+      "inputJson": "{\"n\":1.5}",
+      "expectReject": false
     }
   ],
   "structural": [
@@ -601,6 +615,82 @@
         "parents": []
       },
       "expectError": false
+    },
+    {
+      "id": "P4",
+      "status": "proposed-01",
+      "description": "parents is not an array (string); MUST reject and MUST NOT default to []",
+      "node": {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "test-scope-001",
+        "issuer": {
+          "issuerId": "test-issuer",
+          "keyId": "test-key-1"
+        },
+        "agent": {
+          "agentId": "test-agent",
+          "version": "1.0.0"
+        },
+        "action": {
+          "type": "atp:request"
+        },
+        "signature": "x",
+        "parents": "not-an-array"
+      },
+      "expectError": true,
+      "error": "parents must be an array"
+    },
+    {
+      "id": "P5",
+      "status": "proposed-01",
+      "description": "parents entry wrong length (63 hex chars); MUST reject",
+      "node": {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "test-scope-001",
+        "issuer": {
+          "issuerId": "test-issuer",
+          "keyId": "test-key-1"
+        },
+        "agent": {
+          "agentId": "test-agent",
+          "version": "1.0.0"
+        },
+        "action": {
+          "type": "atp:request"
+        },
+        "signature": "x",
+        "parents": [
+          "000000000000000000000000000000000000000000000000000000000000000"
+        ]
+      },
+      "expectError": true,
+      "error": "parent is not a lowercase hex SHA-256 nodeId: 000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "id": "P6",
+      "status": "proposed-01",
+      "description": "parents entry 64 hex chars plus trailing newline; MUST reject (fullmatch)",
+      "node": {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "scope": "test-scope-001",
+        "issuer": {
+          "issuerId": "test-issuer",
+          "keyId": "test-key-1"
+        },
+        "agent": {
+          "agentId": "test-agent",
+          "version": "1.0.0"
+        },
+        "action": {
+          "type": "atp:request"
+        },
+        "signature": "x",
+        "parents": [
+          "0000000000000000000000000000000000000000000000000000000000000000\n"
+        ]
+      },
+      "expectError": true,
+      "error": "parent is not a lowercase hex SHA-256 nodeId: 0000000000000000000000000000000000000000000000000000000000000000\n"
     }
   ],
   "payloadHashFormat": [

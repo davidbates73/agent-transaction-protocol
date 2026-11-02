@@ -214,6 +214,7 @@ const timestampFormat = [
   { id: 'T7', status: 'proposed-01', description: '+00:00 offset instead of Z; MUST reject', value: '2026-01-01T00:00:00+00:00', valid: false },
   { id: 'T8', status: 'proposed-01', description: 'seconds = 60; MUST reject', value: '2026-01-01T00:00:60Z', valid: false },
   { id: 'T9', status: 'proposed-01', description: 'invalid calendar date 2026-02-30; MUST reject', value: '2026-02-30T00:00:00Z', valid: false },
+  { id: 'T10', status: 'proposed-01', description: 'Arabic-Indic digits in year; MUST reject (ASCII [0-9] only)', value: '٢٠٢٦-01-01T00:00:00Z', valid: false },
 ];
 for (const tcase of timestampFormat) {
   const got = isAtpTimestamp(tcase.value);
@@ -236,6 +237,7 @@ expectParseReject('J3', '{"s":"\\ud800"}');
 expectParseReject('J4', '{"n":9007199254740993}');
 expectParseReject('J5', '{"n":1e400}');
 expectParseAccept('Jpair', '{"s":"\\uD800\\uDC00"}');
+expectParseAccept('J6', '{"n":1.5}');
 
 const ijson = [
   { id: 'J1', status: 'proposed-01', description: 'duplicate member name at top level; MUST reject', inputJson: '{"a":1,"a":2}', expectReject: true },
@@ -243,6 +245,7 @@ const ijson = [
   { id: 'J3', status: 'proposed-01', description: 'unpaired surrogate \\ud800 in string; MUST reject at parse', inputJson: '{"s":"\\ud800"}', expectReject: true },
   { id: 'J4', status: 'proposed-01', description: 'integer 9007199254740993 outside ±(2^53-1); MUST reject (raw token)', inputJson: '{"n":9007199254740993}', expectReject: true },
   { id: 'J5', status: 'proposed-01', description: 'number 1e400 outside IEEE-754 double; MUST reject', inputJson: '{"n":1e400}', expectReject: true },
+  { id: 'J6', status: 'proposed-01', description: 'ordinary decimal 1.5 is accepted (finite non-integer)', inputJson: '{"n":1.5}', expectReject: false },
 ];
 
 const baseStruct = {
@@ -260,6 +263,9 @@ const structural = [
   { id: 'H2', status: 'proposed-01', description: 'uppercase hex in inputHash; MUST reject', node: { ...baseStruct, parents: [], action: { type: 'atp:request', inputHash: 'sha256:' + 'A'.repeat(64) } }, expectError: true },
   { id: 'H3', status: 'proposed-01', description: 'unknown hash prefix sha512:; MUST reject', node: { ...baseStruct, parents: [], action: { type: 'atp:request', inputHash: 'sha512:' + '0'.repeat(64) } }, expectError: true },
   { id: 'H4', status: 'proposed-01', description: 'valid sha256: lowercase inputHash', node: { ...baseStruct, parents: [], action: { type: 'atp:request', inputHash: 'sha256:' + bareHex } }, expectError: false },
+  { id: 'P4', status: 'proposed-01', description: 'parents is not an array (string); MUST reject and MUST NOT default to []', node: { ...baseStruct, parents: 'not-an-array' }, expectError: true },
+  { id: 'P5', status: 'proposed-01', description: 'parents entry wrong length (63 hex chars); MUST reject', node: { ...baseStruct, parents: ['0'.repeat(63)] }, expectError: true },
+  { id: 'P6', status: 'proposed-01', description: 'parents entry 64 hex chars plus trailing newline; MUST reject (fullmatch)', node: { ...baseStruct, parents: ['0'.repeat(64) + '\n'] }, expectError: true },
 ];
 for (const s of structural) {
   const err = structuralError(s.node);

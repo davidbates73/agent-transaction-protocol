@@ -425,7 +425,7 @@ def create_node(fields: dict, seed: bytes) -> dict:
 # Section 8: Timestamp format (exactly 20 chars: YYYY-MM-DDTHH:MM:SSZ)
 # ---------------------------------------------------------------------------
 
-_ATP_TIMESTAMP_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})Z$")
+_ATP_TIMESTAMP_RE = re.compile(r"^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})Z$")
 _DAYS_IN_MONTH = (0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
 
 
@@ -504,7 +504,7 @@ def structural_error(node) -> Optional[str]:
     if not isinstance(parents, list):
         return "parents must be an array"
     for p in parents:
-        if not (isinstance(p, str) and _HEX64.match(p)):
+        if not (isinstance(p, str) and _HEX64.fullmatch(p)):
             return f"parent is not a lowercase hex SHA-256 nodeId: {p}"
     if len(set(parents)) != len(parents):
         return "duplicate parent nodeId"
@@ -630,9 +630,15 @@ def validate(
             lineage_ok[i] = ok; return ok
         stack.add(i)
         parents_ok = True
-        for p in n.get("parents", []) if isinstance(n.get("parents"), list) else []:
-            if not visit(p, depth + 1, stack):
-                parents_ok = False
+        # MUST NOT default missing/non-array parents to [] before/during validation.
+        parents = n.get("parents") if "parents" in n else None
+        if not isinstance(parents, list):
+            parents_ok = False
+            note(i, "parents is absent or not an array")
+        else:
+            for p in parents:
+                if not visit(p, depth + 1, stack):
+                    parents_ok = False
         stack.discard(i)
         if ok and n["action"]["type"] == "atp:relay":
             relay[i] = relay_state(n)
@@ -674,7 +680,7 @@ def index_nodes(nodes: Iterable[dict]) -> Dict[str, dict]:
 
 
 def tips(nodes: List[dict]) -> List[str]:
-    referenced = {p for n in nodes for p in n.get("parents", [])}
+    referenced = {p for n in nodes for p in (n["parents"] if isinstance(n.get("parents"), list) else [])}
     return [i for i in (n.get("nodeId") or compute_node_id(n) for n in nodes) if i not in referenced]
 
 
