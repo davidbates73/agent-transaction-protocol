@@ -1,0 +1,14 @@
+{
+  "name": "atp-reference-node",
+  "version": "0.1.0",
+  "description": "Zero-dependency Node.js reference implementation of ATP Core (draft-bates-atp) with golden-vector runner",
+  "type": "module",
+  "license": "BSD-3-Clause",
+  "engines": { "node": ">=18" },
+  "bin": { "atp": "bin/atp.js" },
+  "scripts": {
+    "test": "node bin/run-vectors.js",
+    "demo": "node bin/demo.js",
+    "vectors:generate": "node bin/generate-vectors.js"
+  }
+}

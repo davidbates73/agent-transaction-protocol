@@ -40,6 +40,14 @@ This repository is the public working space for the ATP specification family, in
 - issue tracking and technical review
 - future profile discussion
 
+## Try it
+
+```sh
+./implementations/run-all.sh
+```
+
+This runs the golden vectors against two independent implementations (Node.js and Python, zero dependencies), plus a signed end-to-end Appendix A demo and a cross-implementation interop check. See [`implementations/`](implementations/).
+
 ## Repository layout
 
 - `submitted/` — submitted Internet-Draft text artifacts as filed
@@ -47,7 +55,8 @@ This repository is the public working space for the ATP specification family, in
 - `vectors/` — test vectors and expected outputs
 - `examples/` — worked examples and diagrams
 - `profiles/` — future profile notes and related work
-- `docs/` — contributor and review guidance
+- `implementations/` — Node.js and Python reference implementations
+- `docs/` — contributor and review guidance, including the [-00 review](docs/review-draft-00.md)
 
 ## Submitted vs. friendly versions
 

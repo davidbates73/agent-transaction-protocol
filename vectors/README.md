@@ -21,6 +21,15 @@ The authoritative published test-vector specification for a submitted revision i
 
 This directory exists to hold machine-friendly or implementation-friendly assets that may accompany those drafts.
 
+## Machine-readable vectors
+
+[`atp-core-test-vectors.json`](atp-core-test-vectors.json) holds every published -00 vector, exactly as printed in draft-bates-atp-test-vectors-00, plus proposed -01 additions. Each entry is tagged `published-00` or `proposed-01`. Runners:
+
+- Node.js: `node implementations/node/bin/run-vectors.js`
+- Python: `python3 implementations/python/run_vectors.py`
+
+Regenerate the file with `node implementations/node/bin/generate-vectors.js`. CI fails if the committed file is stale.
+
 ## Suggested subdirectories
 
 - `canonicalization/` — canonical input/output fixtures

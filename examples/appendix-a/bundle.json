@@ -1,0 +1,183 @@
+{
+  "atpVersion": "1",
+  "nodes": [
+    {
+      "nodeId": "579a990bf8da950b027c16e1c4a2ebdcb37376719f19052e9a2f833e7f829e5a",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "platform.example",
+        "keyId": "platform-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:00Z",
+      "agent": {
+        "agentId": "orchestrator-agent",
+        "version": "1.3.0"
+      },
+      "actor": {
+        "actorId": "psn:9c3a7e4f-bob",
+        "authContext": "saml:corp-idp"
+      },
+      "action": {
+        "type": "atp:request",
+        "subtype": "tool_catalog_query",
+        "inputHash": "sha256:22d01b62b67fd95aa602f4ba4ba52689b4705ac348832e6a9e76b71e576638fb"
+      },
+      "parents": [],
+      "signature": "OzGGSI5DNV55SqENO281fdc6hKNCI6qmTIXWd3lLtkZojsME7gj5Atfc0cIpINJTKaqyr195LcT/y84x+c3MBQ=="
+    },
+    {
+      "nodeId": "bd3a4b579556fd2697d795c713a12ab6fbe76d4fda1cd0534202cb9bbb8c8367",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "mcp-broker.example",
+        "keyId": "broker-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:01Z",
+      "agent": {
+        "agentId": "mcp-catalog-service",
+        "version": "2.1.0"
+      },
+      "action": {
+        "type": "atp:completion",
+        "subtype": "tool_catalog_response",
+        "inputHash": "sha256:22d01b62b67fd95aa602f4ba4ba52689b4705ac348832e6a9e76b71e576638fb",
+        "outputHash": "sha256:2888ec58f0a28271f6e97f0a3e13b7c264d74155e0abc03f133067bc5867ab97"
+      },
+      "parents": [
+        "579a990bf8da950b027c16e1c4a2ebdcb37376719f19052e9a2f833e7f829e5a"
+      ],
+      "signature": "a+07A4mueor9tqan+DOtwnkg2slpoE+HnKwjLTXl+FJbh0A8X919Ry8Aeq+NGPL7X/dAVTM6V/O7J03BEkkfDA=="
+    },
+    {
+      "nodeId": "2afad50654fd4223133449a8a8a0b361ce34c315d587d4feadacbe8466fa5507",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "platform.example",
+        "keyId": "platform-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:02Z",
+      "agent": {
+        "agentId": "orchestrator-agent",
+        "version": "1.3.0"
+      },
+      "actor": {
+        "actorId": "psn:9c3a7e4f-bob",
+        "authContext": "saml:corp-idp"
+      },
+      "action": {
+        "type": "atp:decision",
+        "subtype": "tool_selection_decision",
+        "inputHash": "sha256:2888ec58f0a28271f6e97f0a3e13b7c264d74155e0abc03f133067bc5867ab97",
+        "outputHash": "sha256:3ddd1467682bdda4e2088885ef0b409b75509938e214bfecd8512d9da9c8945a"
+      },
+      "parents": [
+        "bd3a4b579556fd2697d795c713a12ab6fbe76d4fda1cd0534202cb9bbb8c8367"
+      ],
+      "signature": "29sIRFfffKm0g3zX4ZuruLWLQDer1Vn2+Urssyx7o7sv6uaHRUy2Q8AQ9WxWndy7pPZU8UDFSaR/oABUyQBeDw=="
+    },
+    {
+      "nodeId": "3d67c513c9fce1c969df60be4c757b113c6372ab00305a1b18d14e16f6b8a661",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "platform.example",
+        "keyId": "platform-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:03Z",
+      "agent": {
+        "agentId": "orchestrator-agent",
+        "version": "1.3.0"
+      },
+      "actor": {
+        "actorId": "psn:9c3a7e4f-bob",
+        "authContext": "saml:corp-idp"
+      },
+      "action": {
+        "type": "atp:request",
+        "subtype": "tool_invocation_request",
+        "inputHash": "sha256:a3bf701ff235247fc3aa3e7c5ce8edbccb0b4fd501302f114e1859a1a3e8c08f"
+      },
+      "parents": [
+        "2afad50654fd4223133449a8a8a0b361ce34c315d587d4feadacbe8466fa5507"
+      ],
+      "signature": "6eViCsAyFP+iPI9aiGZ+TRmjn5y5wFkPYfQHLyLL/XrAsoNT+EH1XCOyoWmrobinT1X+Q/uTCu5bun2gFOKZCA=="
+    },
+    {
+      "nodeId": "81671b1fb1a640be1ac6fe590b29d53685a9285231b293ba53f3472cba2c0a82",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "tool-crm.example",
+        "keyId": "crm-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:04Z",
+      "agent": {
+        "agentId": "crm-lookup-service",
+        "version": "5.0.2"
+      },
+      "action": {
+        "type": "atp:completion",
+        "subtype": "tool_execution",
+        "inputHash": "sha256:a3bf701ff235247fc3aa3e7c5ce8edbccb0b4fd501302f114e1859a1a3e8c08f",
+        "outputHash": "sha256:a7c0674dad2b224ce361bc6654c9ac4971ca0a47ed88fe04447eaa1350291cde"
+      },
+      "parents": [
+        "3d67c513c9fce1c969df60be4c757b113c6372ab00305a1b18d14e16f6b8a661"
+      ],
+      "signature": "JCIuI4wjoNwhKeHt5ysR9gvs+wOztr8vfUv6fhnn95TV9bFVSaexLT7Teyp8UBO6hm+a73WjxGMvYu6bXvqtBg=="
+    },
+    {
+      "nodeId": "9e6aa12a28c45f0aac85f4bbd8ca651cda4ce0875ba284e9dd1f34c47bed4cb2",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "mcp-broker.example",
+        "keyId": "broker-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:05Z",
+      "agent": {
+        "agentId": "mcp-relay-service",
+        "version": "2.1.0"
+      },
+      "action": {
+        "type": "atp:relay",
+        "subtype": "tool_execution_response",
+        "inputHash": "sha256:a7c0674dad2b224ce361bc6654c9ac4971ca0a47ed88fe04447eaa1350291cde",
+        "outputHash": "sha256:a7c0674dad2b224ce361bc6654c9ac4971ca0a47ed88fe04447eaa1350291cde"
+      },
+      "parents": [
+        "81671b1fb1a640be1ac6fe590b29d53685a9285231b293ba53f3472cba2c0a82"
+      ],
+      "signature": "s7O2llXLndbNA2kM04myQXklNLHGay0HfJLMkz23TWUauU8AQ7fA/5aErUGvSZKc79AdMwKO3CYy9yFrsqmbCg=="
+    },
+    {
+      "nodeId": "7798be80022487aebc0b63f0a4ace006cb57e4c24934272f73a20dcb941b64d2",
+      "scope": "wf-8f3a1b",
+      "issuer": {
+        "issuerId": "platform.example",
+        "keyId": "platform-2026-04"
+      },
+      "timestamp": "2026-04-23T12:58:06Z",
+      "agent": {
+        "agentId": "orchestrator-agent",
+        "version": "1.3.0"
+      },
+      "actor": {
+        "actorId": "psn:9c3a7e4f-bob",
+        "authContext": "saml:corp-idp"
+      },
+      "action": {
+        "type": "atp:decision",
+        "subtype": "decision_synthesis",
+        "inputHash": "sha256:d0e082d6f4487967ef8d477508b96300fd420f9136ee63531a32ade856574a46",
+        "outputHash": "sha256:8622adfa3c33b865789ea3800fe12d2f65b67f3e088ac93169873c44960d2137"
+      },
+      "parents": [
+        "9e6aa12a28c45f0aac85f4bbd8ca651cda4ce0875ba284e9dd1f34c47bed4cb2",
+        "2afad50654fd4223133449a8a8a0b361ce34c315d587d4feadacbe8466fa5507"
+      ],
+      "signature": "XYBqD9exCG9wHJeYh52nuP2Ncqy8APUAiqyLxthUqmOOJVGwRmkKaqt8RQdxSOmksvTOoaXjjmy24vdWdQjACg=="
+    }
+  ],
+  "withheldNodeIds": [],
+  "scopes": [
+    "wf-8f3a1b"
+  ]
+}
