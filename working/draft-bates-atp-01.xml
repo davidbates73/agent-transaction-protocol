@@ -1,0 +1,1779 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!DOCTYPE rfc [
+  <!ENTITY nbsp    "&#160;">
+  <!ENTITY zwsp    "&#8203;">
+  <!ENTITY nbhy    "&#8209;">
+  <!ENTITY wj      "&#8288;">
+]>
+<rfc xmlns:xi="http://www.w3.org/2001/XInclude"
+     ipr="trust200902"
+     docName="draft-bates-atp-01"
+     submissionType="independent"
+     category="info"
+     tocInclude="true"
+     sortRefs="true"
+     symRefs="true"
+     version="3">
+  <front>
+    <title abbrev="ATP">Agent Transaction Protocol (ATP)</title>
+    <seriesInfo name="Internet-Draft" value="draft-bates-atp-01"/>
+    <author fullname="David A. Bates" initials="D." surname="Bates">
+      <organization>SVT Robotics</organization>
+      <address>
+        <email>david.bates@svtrobotics.com</email>
+        <uri>https://www.svtrobotics.com/</uri>
+      </address>
+    </author>
+    <date day="2" month="November" year="2026"/>
+    <area>Applications</area>
+    <workgroup>Independent Submission</workgroup>
+    <keyword>agent</keyword>
+    <keyword>transaction</keyword>
+    <keyword>protocol</keyword>
+    <keyword>signature</keyword>
+    <keyword>DAG</keyword>
+    <keyword>lineage</keyword>
+    <keyword>audit</keyword>
+    <keyword>tamper-evident</keyword>
+    <abstract>
+<t>ATP defines a cryptographically verifiable directed acyclic graph (DAG) model for agent transactions. ATP enables tamper-evident signed causality and auditable lineage across agentic systems by representing each action as a signed node with one or more parent references, assuming verifier access to issuer public keys and the referenced parent nodes. The protocol is designed to be lightweight, transport-independent, and suitable for environments where accountability, provenance, and verifiable history are required.</t>
+    </abstract>
+  </front>
+  <middle>
+<section anchor="sec-introduction" numbered="true">
+  <name>Introduction</name>
+<t>Agentic systems are rapidly increasing in autonomy, composition, and reach. Agents now invoke tools, delegate work to other agents, operate across service boundaries, and act on behalf of both humans and non-human principals. Existing observability and identity standards solve parts of this problem, but they do not fully answer a more difficult governance question: can an independent verifier prove what action occurred, what prior actions caused it, and under whose authority it was taken?</t>
+<t>ATP is intended to address that gap. ATP does not attempt to replace existing identity, authorization, transport, or observability mechanisms. Instead, ATP defines a minimal protocol for expressing agent actions as signed graph nodes with explicit parent references. This makes the resulting lineage tamper-evident; independent verification requires access to issuer public keys and parent nodes through deployment-specific mechanisms.</t>
+<t>ATP is designed around causality rather than simple sequencing. Linear logs can describe what happened next, but complex agent systems require a model that can express branching, merging, delegation, and parallelism. ATP therefore adopts a DAG model so that the protocol can represent heritage truthfully rather than forcing artificial ordering.</t>
+<t>Adjacent work on agent identity and authentication
+(<xref target="NI"/>, <xref target="KASSELMAN"/>), agent communications
+(<xref target="ROSENBERG"/>), domain-specific governance
+(<xref target="SMITH"/>), AI agent standards coordination
+(<xref target="NIST-AASI"/>), OAuth building blocks often composed with
+agent systems (<xref target="RFC8693"/>, <xref target="RFC7591"/>),
+well-known URI patterns for key discovery (<xref target="RFC8615"/>),
+and verifiable credentials / decentralized identifiers
+(<xref target="W3C-VC-DM"/>, <xref target="W3C-DID"/>) is surveyed in
+<xref target="sec-related-work"/>.</t>
+<section anchor="sec-document-scope" numbered="true">
+  <name>Document Scope</name>
+<t>This document defines <strong>ATP Core</strong>: the node schema, canonicalization, signing, validation, scope model, validation modes, security considerations, privacy considerations, operational guidance, Core action types, and a Profile Framework that establishes how profiles MAY extend or constrain Core.</t>
+<t>Profile-specific rules -- including domain-specific action-type vocabularies, emission and node-worthiness rules, sealed-scope semantics, composite conformance labels, and the full profile specification template -- are defined in separate profile specifications (see <xref target="sec-profile-framework"/>). One illustrative example of such a profile is an ATP-MCP profile that defines composite conformance labels such as ATP-MCP-L1, ATP-MCP-L2, or ATP-MCP-L3 for chains describing Model Context Protocol <xref target="MCP"/> interactions; ATP-MCP is one possible profile among many and is not specially privileged by ATP Core. A future ATP Profiles companion document (not yet published as an Internet-Draft) is expected to be one such specification; it is not normatively required to use ATP Core.</t>
+</section>
+<section anchor="sec-cumulative-deferrals" numbered="true">
+  <name>Cumulative Deferrals</name>
+<t>ATP Core intentionally defers several operational concerns to deployments and future specifications: key discovery (<xref target="sec-key-lifecycle"/>), cross-scope retrieval and federation (<xref target="sec-cross-scope-resolution"/>), transport binding, deletion mechanisms (<xref target="sec-deletion-and-redaction-operations"/>), well-known URI registration (<xref target="sec-iana-considerations"/>), and algorithm agility (<xref target="sec-signing-and-verification"/>). Each individual deferral is a deliberate scope-discipline choice. Cumulatively, the minimum operationally complete deployment between two strangers therefore requires out-of-spec agreements on key publication, node availability, and transport. Deployments that cannot reach those agreements out-of-band SHOULD layer ATP with a transparency service or federation profile (<xref target="sec-suppression-and-anti-suppression"/>, <xref target="sec-c-6-transparency-and-supply-chain-provenance"/>) rather than expanding ATP Core.</t>
+</section>
+</section>
+<section anchor="sec-conventions-and-requirements-language" numbered="true">
+  <name>Conventions and Requirements Language</name>
+<t>The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in BCP 14 <xref target="RFC2119"/> <xref target="RFC8174"/> when, and only when, they appear in all capitals, as shown here.</t>
+<t>For the purposes of this document:</t>
+<ul>
+  <li><strong>Node:</strong> A single ATP transaction object.</li>
+  <li><strong>Parent:</strong> A referenced prior node that contributes to the current node's heritage.</li>
+  <li><strong>Heritage:</strong> The recursively traversable causal lineage of a node.</li>
+  <li><strong>Issuer:</strong> The entity that signs the node.</li>
+  <li><strong>Agent:</strong> The execution identity that performed the action. An agent MAY be any executable identity -- a software service, an AI model, a robotic system, an automated process, or a human operator acting through an instrumented interface. ATP does not assume an agent is an AI model; the term is used in its general sense of "the entity that took the action."</li>
+  <li><strong>Actor:</strong> An OPTIONAL delegating principal on whose behalf the action was taken. The actor is distinct from the agent: the agent performs the action, the actor authorizes it. An actor MAY be a human, a service account, a scheduled-job identity, or another accountable non-human principal.</li>
+  <li><strong>Scope:</strong> The transaction boundary within which node identity and validation semantics are evaluated.</li>
+  <li><strong>Validation:</strong> The act of recomputing node identity, verifying signatures, and traversing parent relationships according to ATP rules.</li>
+  <li><strong>Profile:</strong> A normative specification that extends or constrains ATP Core for a specific deployment context, domain, or interoperability scope (see <xref target="sec-profile-framework"/>).</li>
+  <li><strong>Profile Assessment:</strong> A profile-defined evaluation of whether a node or scope satisfies a profile's emission, lineage, or completion rules. Profile assessment is distinct from ATP Core validation (see <xref target="sec-profile-assessment-states"/>).</li>
+</ul>
+</section>
+<section anchor="sec-problem-statement" numbered="true">
+  <name>Problem Statement</name>
+<t>Modern agentic systems create a governance gap. An action may be initiated by one principal, delegated to an orchestrator, enriched by multiple subordinate agents, and executed through tools or downstream systems. Traditional logs can record these events, but they are frequently mutable, centralized, or unable to prove lineage independently of the platform that produced them. Likewise, identity tokens can prove who was authenticated, but they do not provide a durable, linked record of what happened across a causal graph of actions.</t>
+<t>This creates operational and governance problems, including but not limited to agent sprawl, weak accountability, incomplete audit trails, and difficulty reconstructing a trustworthy history of actions after an incident. ATP is intended to provide a common protocol layer for verifiable agent-action lineage without requiring a blockchain, without embedding large payloads, and without taking ownership of broader policy or trust-distribution concerns.</t>
+</section>
+<section anchor="sec-design-goals" numbered="true">
+  <name>Design Goals</name>
+<t>ATP is designed to satisfy the following goals:</t>
+<ul>
+  <li><strong>Verifiable causality:</strong> An implementation can determine what prior node or nodes caused a current action.</li>
+  <li><strong>Tamper-evident heritage:</strong> Changes to a node or its referenced lineage invalidate downstream verification.</li>
+  <li><strong>Deterministic identity:</strong> Independently implemented systems can compute the same node identity from the same canonical content.</li>
+  <li><strong>Lightweight representation:</strong> ATP carries hashes and lineage references rather than full payload bodies.</li>
+  <li><strong>Transport independence:</strong> ATP is not bound to a specific transport, runtime, vendor, or model provider.</li>
+  <li><strong>Role separation:</strong> Issuer, agent, and actor are represented distinctly so that governance questions can be answered without conflating execution identity and delegated authority.</li>
+  <li><strong>DAG-native semantics:</strong> ATP models branching and merging natively rather than forcing complex systems into an artificial linear chain.</li>
+</ul>
+</section>
+<section anchor="sec-non-goals" numbered="true">
+  <name>Non-Goals</name>
+<t>ATP intentionally does not define several adjacent concerns.</t>
+<t>ATP Core does not define:</t>
+<ul>
+  <li>trust registries or cross-organization trust anchors;</li>
+  <li>key distribution, discovery, or long-term revocation infrastructure;</li>
+  <li>payload storage or payload confidentiality controls;</li>
+  <li>authorization policy or runtime access control decisions;</li>
+  <li>consensus mechanisms or conflict resolution across divergent histories;</li>
+  <li>execution semantics for how agents, tools, or workflows must behave;</li>
+  <li>profile governance procedures, the profile specification template, or composite conformance labels (those are defined by individual profile specifications and by a future ATP Profiles companion document (not yet published as an Internet-Draft));</li>
+  <li>domain-specific node-worthiness, streaming semantics, or sealed-scope mechanisms (those are profile responsibilities, see <xref target="sec-profile-framework"/>);</li>
+  <li>anti-suppression mechanisms (see <xref target="sec-suppression-and-anti-suppression"/>); a transparency-service layer such as a SCITT-compatible service (see <xref target="sec-c-6-transparency-and-supply-chain-provenance"/>) MAY be composed alongside ATP where anti-suppression is required.</li>
+</ul>
+<t>Those concerns may be layered alongside ATP Core, but keeping them out of the core protocol is necessary to preserve implementability, interoperability, and scope discipline.</t>
+<t>ATP records delegation claims; it does not prove delegation.</t>
+</section>
+<section anchor="sec-architecture-overview" numbered="true">
+  <name>Architecture Overview</name>
+<t>ATP is a protocol layer, not a full platform. ATP assumes that systems already have mechanisms for transport, execution, payload storage, and authorization. ATP adds a verifiable transaction layer that can travel alongside those mechanisms.</t>
+<t>ATP is intentionally domain-neutral. It is suitable for AI agent orchestration, but equally suitable for any system that benefits from cryptographically signed, causally linked records of actions. Illustrative use cases include (non-exhaustively): an insurance underwriting workflow recording the chain of claim adjudication decisions; a fraud-detection pipeline recording each scoring step and the data used; a regulated medical-triage system recording why one path was selected over another; a supply-chain routing system recording handoffs between carriers; or any orchestrator-and-tool architecture (the pattern <xref target="sec-worked-example-mcp-tool-discovery-and-invocation"/> illustrates). The protocol mechanics -- DAG-structured signed nodes with deterministic identity -- are the same in all cases.</t>
+<t>At a high level, an ATP-aware system performs the following steps for each action:</t>
+<ol>
+  <li>Construct a transaction node describing the action.</li>
+  <li>Canonicalize the node according to ATP rules.</li>
+  <li>Compute the node identifier from the canonical content.</li>
+  <li>Sign the node identifier using the issuer's private key.</li>
+  <li>Store, emit, or transmit the signed node through implementation-specific means.</li>
+  <li>Validate the node and its parents when lineage or integrity must be verified.</li>
+</ol>
+<t>ATP is intentionally compatible with centralized or decentralized storage patterns. A deployment MAY keep nodes in an append-only event store, a content-addressed object store, a relational database, or another storage substrate, provided ATP node integrity and parent resolution semantics are preserved.</t>
+<section anchor="sec-deployment-patterns" numbered="true">
+  <name>Deployment Patterns</name>
+<t>ATP does not mandate a single deployment topology. Three patterns are common; deployments MAY combine them.</t>
+<t><strong>Pattern 1 -- Inline emission.</strong> The executor that performs the action also constructs, signs, and persists the ATP node. The request node is constructed and signed <em>before</em> the action is invoked (its <tt>inputHash</tt> covers the request payload); the completion or failure node is constructed and signed <em>after</em> the action returns (its <tt>outputHash</tt> covers the result). This pattern requires the executor to hold issuer key material directly. It is the lowest-overhead pattern and is appropriate when the executor is the natural signing-authority boundary.</t>
+<t><strong>Pattern 2 -- Sidecar emission.</strong> The executor delegates ATP node construction and signing to a co-located ATP-emit service. The executor calls the sidecar with action metadata; the sidecar canonicalizes, signs, and persists. This pattern centralizes key custody at the sidecar boundary and is appropriate when the executor cannot or should not hold private key material directly.</t>
+<t><strong>Pattern 3 -- Centralized audit service.</strong> A separate service observes executor activity (via instrumentation, message-bus subscription, log shipping, or an explicit emit API) and constructs ATP nodes on the executor's behalf. In this pattern the <em>audit service</em> is the issuer, signing under its own key, and the executor is identified in the <tt>agent</tt> field. This pattern is appropriate when executors cannot be modified to participate in ATP directly.</t>
+<t>Storage MAY be centralized (a shared node store accessible to all issuers) or decentralized (each issuer maintains its own store, with cross-issuer references resolved via <xref target="sec-cross-scope-resolution"/> cross-scope mechanisms). ATP does not prescribe; the choice is operational. Implementations SHOULD document which pattern they implement so verifiers can correctly interpret the meaning of unresolved parent references in the chosen topology (<xref target="sec-trust-model-summary"/>, <xref target="sec-suppression-and-anti-suppression"/>).</t>
+</section>
+</section>
+<section anchor="sec-data-model" numbered="true">
+  <name>Data Model</name>
+<t>ATP models agent actions as nodes in a directed acyclic graph.</t>
+<t>A node MAY have zero parents, one parent, or multiple parents:</t>
+<ul>
+  <li>A node with zero parents is a root node.</li>
+  <li>A node with one parent expresses a simple causal dependency.</li>
+  <li>A node with multiple parents expresses fan-in, merge, or synthesized heritage.</li>
+</ul>
+<t>Multiple child nodes MAY reference the same parent. ATP therefore supports fan-out naturally.</t>
+<t>The following diagram illustrates these structural patterns:</t>
+<artwork type="ascii-art"><![CDATA[
+                  +------------------+
+                  | A: Root Node     |
+                  | (0 parents)      |
+                  +--------+---------+
+                           |
+            +--------------+--------------+
+            |                             |
+            v                             v
+   +----------------+            +----------------+
+   | B: Node B      |            | C: Node C      |
+   | (1 parent)     |            | (1 parent)     |
+   +--------+-------+            +--------+-------+
+            |                             |
+            |              +--------------+
+            |              |              |
+            v              v              v
+   +----------------+            +----------------+
+   | D: Node D      |            | E: Node E      |
+   | (2 parents)    |            | (1 parent)     |
+   +----------------+            +----------------+
+]]></artwork>
+<t>In this diagram:</t>
+<ul>
+  <li><strong>Node A</strong> is a root node with zero parents.</li>
+  <li><strong>Nodes B and C</strong> demonstrate fan-out: both reference Node A as a parent.</li>
+  <li><strong>Node D</strong> demonstrates fan-in: it references both Node B and Node C as parents, merging two causal lineages.</li>
+  <li><strong>Node E</strong> demonstrates a simple linear dependency on Node C.</li>
+</ul>
+<t>ATP does not require total ordering across all nodes in a trust domain. The protocol is designed to preserve causal relationships rather than impose a global sequence. Implementations that require ordering MUST provide that behavior outside ATP or as a profile layered on top of ATP.</t>
+<t>A valid ATP graph MUST be acyclic. No node may directly or indirectly reference itself through its parent relationships.</t>
+</section>
+<section anchor="sec-node-schema" numbered="true">
+  <name>Node Schema</name>
+<t>An ATP node is a structured object containing identity, causality, and signature material. The following fields are defined in the base model:</t>
+<ul>
+  <li><strong>nodeId:</strong> The deterministic identifier of the node.</li>
+  <li><strong>timestamp:</strong> The claimed creation time of the node.</li>
+  <li><strong>scope:</strong> The boundary within which the node's identity and lineage are evaluated.</li>
+  <li><strong>issuer:</strong> The signing authority for the node. <tt>issuerId</tt> identifies a signing-authority boundary (see <xref target="sec-issuer-identity-granularity"/>).</li>
+  <li><strong>agent:</strong> The execution identity that performed the action. <tt>agent.version</tt> SHOULD change whenever the agent's decision-producing configuration changes (see <xref target="sec-agent-versioning-guidance"/>).</li>
+  <li><strong>actor:</strong> An OPTIONAL delegating principal on whose behalf the action occurred (see <xref target="sec-actor-mapping-guidance"/>).</li>
+  <li><strong>action:</strong> A description of the action and references to relevant payload hashes. Depending on node type, one or both of <tt>inputHash</tt> and <tt>outputHash</tt> MAY be present.</li>
+  <li><strong>parents:</strong> An ordered array of zero or more parent node identifiers. Each entry MUST be a <tt>nodeId</tt> value as defined in <xref target="sec-node-identity"/>. The order of <tt>parents</tt> is significant for canonicalization (<xref target="sec-canonicalization"/>) but has no semantic priority unless a profile explicitly defines parent-position semantics. A <tt>parents</tt> array MUST NOT contain duplicate <tt>nodeId</tt> values unless a profile explicitly defines multiplicity semantics.</li>
+  <li><strong>profile:</strong> OPTIONAL. Identifies the ATP profile (see <xref target="sec-profile-framework"/>) whose additional rules apply to this node. When absent, ATP Core rules apply exclusively.</li>
+  <li><strong>signature:</strong> The cryptographic signature over the node identifier.</li>
+</ul>
+<t>The base schema is as follows:</t>
+<sourcecode type="jsonc"><![CDATA[
+{
+  "nodeId": "64 lowercase ASCII hex (see Lexical Token Rules)",
+  "timestamp": "see Timestamp Format",
+  "scope": "string",
+  "issuer": {
+    "issuerId": "string",
+    "keyId": "string"
+  },
+  "agent": {
+    "agentId": "string",
+    "version": "string"
+  },
+  "actor": {
+    // OPTIONAL -- see below
+    "actorId": "string",
+    "authContext": "string"
+  },
+  "action": {
+    "type": "string",
+    "inputHash": "see Payload Hash Format",
+    "outputHash": "see Payload Hash Format"
+  },
+  "parents": ["nodeId"],
+  "profile": "string",        // OPTIONAL -- see Profile Identifiers
+  "signature": "canonical base64 (RFC 4648 Sec 3.5)"
+}
+]]></sourcecode>
+<t>The example above is illustrative; fields annotated as OPTIONAL MAY be omitted as defined in the surrounding prose. Per <xref target="sec-canonicalization"/>, omitted fields do not appear in the canonical form and do not affect nodeId computation.</t>
+<t>The <tt>actor</tt> object is OPTIONAL. Actor identifies the delegating principal whose authority the agent is acting under. That principal MAY be a human, a service account, a scheduled-job identity, or another accountable non-human principal. When no delegating principal exists, <tt>actor</tt> is omitted. Such omission is meaningful: it indicates the action was not taken on behalf of an accountable principal.</t>
+<t>When <tt>actor</tt> is omitted, validators MUST NOT treat the omission as missing data; the omission is itself a normative claim that no delegating principal exists. Implementations that fail to record an actor when one exists are emitter-side governance failures, not protocol ambiguities. Validators have no protocol-level mechanism to distinguish accidental omission from autonomous-action omission; deployments requiring that distinction MUST address it operationally -- for example, through emitter-side governance, profile-defined actor-required rules (per <xref target="sec-minimum-profile-contract"/> node-worthiness), or out-of-band audit policy. Profiles MAY further constrain when <tt>actor</tt> MUST be present.</t>
+<t>Within the <tt>action</tt> object, <tt>outputHash</tt> is OPTIONAL in the base protocol. A node MAY omit <tt>outputHash</tt> when the action's outcome is not yet known at emission time (see <xref target="sec-requestcompletion-pairing"/> for the request/completion pairing pattern).</t>
+<t>The <tt>profile</tt> field is OPTIONAL. When present, validators MUST apply the validation rules of the identified profile in addition to ATP Core rules (see <xref target="sec-profile-identifiers"/> and <xref target="sec-canonicalization-of-profile-defined-fields"/>).</t>
+<t>All other top-level fields shown above are REQUIRED unless a future profile or extension explicitly states otherwise.</t>
+<t>Profiles MAY define additional top-level fields and additional fields within the <tt>action</tt> object as specified in <xref target="sec-minimum-profile-contract"/> and <xref target="sec-canonicalization-of-profile-defined-fields"/>. For example, profiles MAY add fields such as <tt>action.subtype</tt>; <xref target="sec-worked-example-mcp-tool-discovery-and-invocation"/> illustrates this pattern.</t>
+<t>A <strong>decisional node</strong> is a node that records a selection, policy decision, or synthesis without a direct invocation of an external system. Decisional nodes typically use <tt>inputHash</tt> to reference the material the decision was based on and <tt>outputHash</tt> to reference the decision rationale or output. The <tt>atp:decision</tt> action type (<xref target="sec-core-action-types"/>) is the canonical core action type for decisional nodes; <xref target="sec-worked-example-mcp-tool-discovery-and-invocation"/> illustrates decisional-node usage in a multi-issuer chain.</t>
+<t>A <strong>relay node</strong> is a node whose action semantics assert that input was forwarded without modification. Relay nodes have unique trust semantics that differ from request/completion semantics; full treatment is in <xref target="sec-relay-node-trust-semantics"/>, with relay-fidelity validation states defined in <xref target="sec-relay-fidelity-validation-states"/>.</t>
+<t>The <tt>parents</tt> member is REQUIRED and MUST be present even when
+the node has no parents, in which case its value is the empty array.
+Each entry MUST be a <tt>nodeId</tt> (see
+<xref target="sec-node-identity"/> and
+<xref target="sec-lexical-token-rules"/>). A validator MUST report as
+invalid any node in which <tt>parents</tt> is absent, is not an
+array, or contains an entry that is not exactly 64 lowercase ASCII
+hexadecimal characters (<xref target="sec-lexical-token-rules"/>),
+and MUST NOT supply a default empty array before recomputing
+<tt>nodeId</tt>.</t>
+<section anchor="sec-timestamp-format" numbered="true">
+  <name>Timestamp Format</name>
+<t>The <tt>timestamp</tt> member MUST be a string conforming to the
+date-time production of <xref target="RFC3339"/>, further restricted
+as follows: the time MUST be expressed in UTC; the time-offset MUST
+be the uppercase character <tt>Z</tt>; the date and time MUST be
+separated by the uppercase character <tt>T</tt>; and the value MUST
+NOT contain fractional seconds. The seconds field MUST be in the
+range 00 to 59, and the date MUST be a valid calendar date. The
+resulting form is exactly 20 characters, for example
+<tt>2026-01-01T00:00:00Z</tt>. Emitters holding a more precise time
+MUST truncate, not round, to whole seconds.</t>
+<t>This is a restricted profile of <xref target="RFC3339"/> that
+excludes leap second 60 and fractional seconds. The lexical form
+MUST match the following ABNF (<xref target="RFC5234"/>), where
+DIGIT is the ASCII digit range %x30-39 only (not other Unicode
+Nd characters):</t>
+<figure>
+  <name>ATP Timestamp ABNF</name>
+  <sourcecode type="abnf"><![CDATA[
+atp-timestamp = date-fullyear "-" date-month "-" date-mday
+                "T" time-hour ":" time-minute ":" time-second "Z"
+date-fullyear = 4DIGIT
+date-month    = 2DIGIT
+date-mday     = 2DIGIT
+time-hour     = 2DIGIT
+time-minute   = 2DIGIT
+time-second   = 2DIGIT
+; DIGIT from RFC 5234: %x30-39
+]]></sourcecode>
+</figure>
+<t>Validators MUST accept only strings that match <tt>atp-timestamp</tt>
+exactly (no leading or trailing whitespace or newline) and that also
+denote a valid calendar date with seconds in 00 through 59.</t>
+<t>Because the timestamp participates in <tt>nodeId</tt> computation
+(<xref target="sec-node-identity"/>), its lexical form, not the
+instant it denotes, is what is hashed. Validators MUST treat a node
+whose timestamp does not match this form as invalid and MUST NOT
+normalize it before recomputing <tt>nodeId</tt>. Profiles that
+require sub-second precision MUST carry it in a profile-defined
+field.</t>
+</section>
+<section anchor="sec-payload-hash-format" numbered="true">
+  <name>Payload Hash Format</name>
+<t>The <tt>inputHash</tt> and <tt>outputHash</tt> members, when
+present, MUST be strings matching <tt>atp-payload-hash</tt> in
+<xref target="sec-lexical-token-rules"/>: the ASCII prefix
+<tt>sha256:</tt> followed by exactly 64 lowercase ASCII hexadecimal
+characters encoding the SHA-256 (<xref target="RFC6234"/>) digest of
+the referenced payload octets. Validators MUST reject any other
+form, including bare hexadecimal, uppercase hexadecimal, or an
+unrecognized algorithm prefix, and MUST NOT normalize it. Which
+octets constitute "the payload" is deployment- or profile-defined;
+for JSON payloads, the octets of the payload canonicalized per
+<xref target="sec-canonicalization"/> are RECOMMENDED.</t>
+<t>The <tt>sha256:</tt> prefix applies only to payload hashes. The
+<tt>nodeId</tt> member and the entries of <tt>parents</tt> are
+unprefixed <tt>atp-node-id</tt> values
+(<xref target="sec-lexical-token-rules"/>), because ATP Core fixes
+SHA-256 for <tt>nodeId</tt> computation
+(<xref target="sec-node-identity"/>).</t>
+</section>
+
+<section anchor="sec-lexical-token-rules" numbered="true">
+  <name>Lexical Token Rules for nodeId, parents, Payload Hashes, and Signatures</name>
+<t>The productions below use ABNF from <xref target="RFC5234"/>.
+DIGIT is %x30-39. Lowercase hexadecimal digits are the ASCII ranges
+%x30-39 / %x61-66 only (characters "0"-"9" and "a"-"f"). Uppercase
+"A"-"F", non-ASCII digits, and other Unicode code points MUST NOT be
+accepted. All %x ranges below are exact octet values (case-sensitive
+where letters appear).</t>
+<figure>
+  <name>nodeId and parents-entry ABNF</name>
+  <sourcecode type="abnf"><![CDATA[
+lc-hexdig       = %x30-39 / %x61-66   ; ASCII 0-9 / a-f
+atp-node-id     = 64lc-hexdig
+parents-entry   = atp-node-id
+]]></sourcecode>
+</figure>
+<figure>
+  <name>Payload hash ABNF</name>
+  <sourcecode type="abnf"><![CDATA[
+atp-payload-hash = %x73.68.61.32.35.36.3a 64lc-hexdig  ; "sha256:"
+]]></sourcecode>
+</figure>
+<figure>
+  <name>Ed25519 signature base64 ABNF</name>
+  <sourcecode type="abnf"><![CDATA[
+b64char            = %x41-5A / %x61-7A / %x30-39 / %x2B / %x2F
+                     ; A-Z / a-z / 0-9 / "+" / "/"
+atp-signature-b64  = 85b64char
+                     ( %x41 / %x51 / %x67 / %x77 )
+                     %x3D.3D
+                     ; 88 chars: 85 alphabet + A/Q/g/w + "=="
+                     ; final data sextet forces pad bits to zero
+]]></sourcecode>
+</figure>
+<t>A <tt>nodeId</tt> value, each <tt>parents</tt> entry, each
+payload-hash string (<tt>inputHash</tt> / <tt>outputHash</tt> when
+present), and the <tt>signature</tt> string MUST consist of exactly
+the characters matched by the corresponding production above, with
+no leading or trailing whitespace, and with no CR, LF, or other
+newline characters inside the string. Validators MUST reject any
+value that does not match exactly and MUST NOT trim, strip,
+case-fold, or otherwise normalize before comparison or before
+recomputing <tt>nodeId</tt>.</t>
+</section>
+
+
+</section>
+<section anchor="sec-canonicalization" numbered="true">
+  <name>Canonicalization</name>
+<t>ATP canonicalization is a two-step operation applied to a node
+from which <tt>nodeId</tt> and <tt>signature</tt> have been removed
+(<xref target="sec-node-identity"/>):</t>
+<ol>
+  <li>Null removal: every object member whose value is the JSON
+  literal <tt>null</tt> is removed, recursively, at every depth of
+  nesting. Array elements are not removed: a <tt>null</tt> that is
+  an element of an array is preserved. An object that becomes empty
+  as a result of null removal is preserved as an empty object
+  (<tt>{}</tt>) and is not itself removed.</li>
+  <li>The result is serialized according to the JSON Canonicalization
+  Scheme <xref target="RFC8785"/>.</li>
+</ol>
+<t>The output of step 2 is the canonical byte sequence. Step 1 is
+the only point at which ATP canonicalization differs from
+<xref target="RFC8785"/>; implementations that use an
+<xref target="RFC8785"/> library MUST apply step 1 first.
+Implementations that do not produce the same octets as this
+two-step procedure are not conformant.</t>
+<t>Input to canonicalization MUST be an I-JSON message
+<xref target="RFC7493"/>. In particular, a validator MUST reject as
+invalid any node that contains an object with duplicate member
+names, any string containing an unpaired surrogate, or any number
+that cannot be represented as a finite IEEE 754 double-precision
+value. Because <xref target="RFC8785"/> serializes every number as
+such a double, a validator MUST also reject any number whose value
+is an integer with magnitude greater than 2^53-1 (for example
+9007199254740993); a validator MUST NOT round such a value before
+canonicalization. A validator MUST likewise reject a number literal
+with a non-zero value that converts to zero as a double
+(underflow, for example <tt>1e-400</tt>). A literal zero, including
+forms such as <tt>0e-400</tt>, MUST NOT be rejected on that basis.
+IEEE 754 subnormal (non-zero) values, for example <tt>5e-324</tt>,
+remain finite doubles and MUST NOT be rejected as underflow.
+Ordinary binary rounding of non-integer values (for example
+<tt>0.1</tt>) is inherent in <xref target="RFC8785"/> and is not a
+reason to reject. Where <xref target="RFC7493"/> states these
+constraints as recommendations (SHOULD), ATP makes them mandatory
+(MUST) for ATP nodes. Profiles SHOULD NOT define fields that carry
+non-integer numbers, and SHOULD carry large integers or decimals as
+strings. Validators MUST NOT resolve duplicate member names by
+keeping either the first or the last occurrence.</t>
+
+
+
+</section>
+<section anchor="sec-signing-and-verification" numbered="true">
+  <name>Signing and Verification</name>
+<section anchor="sec-node-identity" numbered="true">
+  <name>Node Identity</name>
+<t>The node identifier is computed as:</t>
+<artwork><![CDATA[
+nodeId = SHA256(canonical(node_without_signature))
+]]></artwork>
+<t>The <tt>signature</tt> field itself MUST NOT be included in canonicalization or nodeId computation. The <tt>nodeId</tt> field, when present in a node representation, MUST also NOT be included in its own canonicalization. The <tt>nodeId</tt> is the <em>output</em> of canonicalization plus hashing; its inclusion in the input would be circular. Implementations computing or recomputing <tt>nodeId</tt> over a stored or transmitted node MUST first remove both <tt>nodeId</tt> and <tt>signature</tt> before canonicalization. Parent references, scope, timestamp, issuer, agent, actor (when present), <tt>profile</tt> (when present), and action fields MUST be included. Profile-defined fields, when present, MUST be included as specified in <xref target="sec-canonicalization-of-profile-defined-fields"/>.</t>
+<t>ATP Core mandates SHA-256 for <tt>nodeId</tt> computation. ATP Core does not define a hash-algorithm-agility mechanism. This is intentional and keeps the protocol simple at the cost of forward flexibility; if cryptographic developments require a different hash algorithm, that capability will be introduced in a future ATP Core revision or profile rather than negotiated within this version.</t>
+<t>When encoded as a JSON string, <tt>nodeId</tt> MUST match
+<tt>atp-node-id</tt> in <xref target="sec-lexical-token-rules"/>:
+exactly 64 lowercase ASCII hexadecimal characters (%x30-39 /
+%x61-66), with no leading or trailing whitespace and no newline
+characters inside the string. The same production applies to every
+entry of <tt>parents</tt>.</t>
+</section>
+<section anchor="sec-signature-algorithm" numbered="true">
+  <name>Signature Algorithm</name>
+<t>Implementations conforming to this draft MUST support Ed25519 <xref target="RFC8032"/>.</t>
+<t>Additional algorithms MAY be supported by future ATP profiles, but interoperable baseline implementations MUST support Ed25519. ATP Core does not define a signature-algorithm-agility mechanism; the same forward-compatibility rationale stated for hash algorithms (<xref target="sec-node-identity"/>) applies.</t>
+</section>
+<section anchor="sec-signature-computation" numbered="true">
+  <name>Signature Computation</name>
+<t>The Ed25519 <xref target="RFC8032"/> signature is computed over
+the <tt>nodeId</tt>:</t>
+<figure>
+  <name>Signature Computation</name>
+  <artwork type="ascii-art"><![CDATA[
+signature = Ed25519-Sign(privateKey, nodeIdOctets)
+]]></artwork>
+</figure>
+<t>where <tt>nodeIdOctets</tt> is the 32-octet SHA-256 digest
+itself, not its hexadecimal encoding. The <tt>signature</tt> member
+carries the resulting 64-octet signature encoded in base64 with
+padding per <xref target="RFC4648"/> Section 4. The encoding MUST
+be canonical (<xref target="RFC4648"/> Section 3.5, "Canonical
+Encoding"): unused pad bits MUST be zero, and the JSON string MUST
+match <tt>atp-signature-b64</tt> in
+<xref target="sec-lexical-token-rules"/> (exactly 88 characters:
+85 base64 alphabet characters, then one of <tt>A</tt>, <tt>Q</tt>,
+<tt>g</tt>, or <tt>w</tt>, then <tt>==</tt>). Validators MUST reject
+any other encoding, including non-canonical pad bits, missing or
+single-character padding, URL-safe alphabets, or surrounding
+whitespace or newlines, and MUST NOT normalize before verification.</t>
+<t>The key used to generate the signature MUST correspond to
+<tt>issuer.keyId</tt>. A private key used to sign ATP nodes MUST
+NOT be used to sign any other kind of message, by ATP or by any
+other protocol (see <xref target="sec-key-separation"/>).</t>
+</section>
+<section anchor="sec-verification" numbered="true">
+  <name>Verification</name>
+<t>A node is <strong>fully lineage-valid</strong> under ATP only if all of the following conditions hold:</t>
+<ol>
+  <li>The node can be canonicalized successfully.</li>
+  <li>The nodeId recomputes exactly from the canonicalized node content excluding <tt>nodeId</tt> and <tt>signature</tt>.</li>
+  <li>The signature validates against the issuer key identified by <tt>issuer.keyId</tt>.</li>
+  <li>All referenced parent nodes can be resolved in the relevant verification context.</li>
+  <li>All referenced parent nodes are themselves fully lineage-valid according to ATP rules.</li>
+  <li>No cycle is introduced by the node's parent relationships.</li>
+</ol>
+<t>Conditions 1, 2, 3, and 6 together establish <strong>node-level integrity</strong> and apply to every validation mode. Conditions 4 and 5 establish <strong>lineage validity</strong> and apply only to validation modes that resolve parent nodes (full recursive validation per <xref target="sec-full-recursive-validation"/>, and bounded validation within its declared boundary per <xref target="sec-bounded-validation"/>). Tip validation (<xref target="sec-tip-validation"/>) intentionally does not resolve parents and therefore does not establish lineage validity.</t>
+<t>Validation modes other than full recursive validation MAY produce mode-specific validation results as defined in <xref target="sec-validation-modes"/>. An implementation MUST NOT represent the result of tip validation, bounded validation, or redacted-lineage validation as full lineage validation.</t>
+<t>A node with unresolved or invalid parents MUST NOT be treated as fully lineage-valid in any verification context, and MUST be reported in <tt>lineageIncomplete</tt> when the selected mode resolves parents (see <xref target="sec-validation-result-format"/>). A parent that is declared withheld under redacted-lineage validation (<xref target="sec-redacted-lineage-validation"/>) does not by itself place the child in <tt>lineageIncomplete</tt>.</t>
+<t>Conflict resolution between multiple valid child nodes that reference the same parent is out of scope for ATP.</t>
+<t>If a validator cannot retrieve the public key for the (<tt>issuerId</tt>, <tt>keyId</tt>) pair identified in a node, the node MUST be reported as <tt>keyUnresolved</tt> in the validation result. A key-unresolved node MUST NOT be treated as cryptographically valid, and MUST NOT be classified as invalid. The <tt>keyUnresolved</tt> state is distinct from: an invalid node, whose key is available but whose signature verification fails; and an unresolved parent, whose content cannot be obtained in the current verification context.</t>
+<t>A <tt>keyUnresolved</tt> node has not established node-level integrity, even when canonicalization succeeds and <tt>nodeId</tt> recomputes correctly. Node-level integrity (conditions 1, 2, 3, and 6 above) requires successful signature verification, which is impossible without the issuer key. Implementations MUST NOT report a key-unresolved node in the <tt>verified</tt> set of any validation mode.</t>
+<t>When a parent node is <tt>keyUnresolved</tt>, the parent's signature cannot be verified. A child node referencing such a parent retains its own node-level integrity (assuming conditions 1, 2, 3, and 6 hold for the child's own content), but its <strong>lineage validity is not established</strong> for as long as the parent remains key-unresolved. Validators MUST report the parent under <tt>keyUnresolved</tt> and MUST NOT report the child as fully lineage-valid in that validation run. A subsequent re-validation that obtains the parent's public key MAY restore lineage validity for the child without re-signing the child, since the child's signature covers its own <tt>nodeId</tt> only.</t>
+</section>
+
+<section anchor="sec-signature-verification-strictness" numbered="true">
+  <name>Signature Verification Strictness</name>
+<t>Signature verification in condition 3 MUST follow Section 5.1.7 of
+<xref target="RFC8032"/> and, in addition, MUST reject a signature
+whose <tt>S</tt> value is not less than the group order <tt>L</tt>.</t>
+<t>Validators MUST also reject a public key <tt>A</tt> or signature
+point <tt>R</tt> whose encoding is not canonical (an encoded
+<tt>y</tt> coordinate not less than <tt>p</tt>), and MUST reject
+<tt>A</tt> or <tt>R</tt> of small order, that is, when <tt>[8]A</tt>
+or <tt>[8]R</tt> is the identity point. These checks apply even when
+the verification equation holds. This rule set is stricter than the
+plain verification equation in <xref target="RFC8032"/> alone.</t>
+</section>
+</section>
+<section anchor="sec-heritage-and-dag-semantics" numbered="true">
+  <name>Heritage and DAG Semantics</name>
+<t>Heritage is the complete set of ancestor nodes reachable by recursively following parent references from a given node. Heritage establishes the causal lineage of an action.</t>
+<t>ATP heritage has the following properties:</t>
+<ul>
+  <li><strong>Transitivity.</strong> If node C references node B as a parent, and node B references node A as a parent, then node A is part of node C's heritage.</li>
+  <li><strong>Tamper evidence.</strong> Because each nodeId is computed from canonical content that includes parent references, modifying any ancestor invalidates the nodeId of every descendant that references it, directly or transitively.</li>
+  <li><strong>Non-exclusivity.</strong> A node's heritage may include nodes signed by multiple issuers, spanning multiple scopes, and representing actions taken by multiple agents. Heritage is a graph property, not an ownership property.</li>
+</ul>
+<t>Heritage traversal is the mechanism by which validators answer causal questions: "what caused this action?" is answered by walking parent edges; "was this action derived from a specific prior action?" is answered by checking whether a given nodeId appears in the heritage of the node under inspection.</t>
+<t>ATP does not define a required traversal algorithm. Implementations MAY use depth-first, breadth-first, or other graph-traversal strategies. The protocol requires only that heritage traversal follows parent references and that each traversed node is subject to the applicable validation mode (see <xref target="sec-validation-modes"/>).</t>
+<t>Because ATP graphs are DAGs, heritage traversal is guaranteed to terminate. The acyclicity constraint (<xref target="sec-data-model"/>) ensures that no traversal path can loop.</t>
+<t>Fan-in nodes -- nodes with multiple parents -- create heritage that merges two or more causal lineages. This is intentional and necessary for representing actions that depend on multiple prior results, such as a synthesis that combines a tool execution result and a prior selection decision. Heritage traversal through a fan-in node follows all parent edges.</t>
+<section anchor="sec-identical-content-and-idempotency" numbered="true">
+  <name>Identical Content and Idempotency</name>
+<t>Because <tt>nodeId</tt> is content-addressed (<xref target="sec-node-identity"/>), two emissions that produce identical canonical content will produce identical <tt>nodeId</tt> values. ATP treats such emissions as the same logical node: a verifier that encounters the same <tt>nodeId</tt> twice MAY deduplicate, and storage substrates MAY reject the second write as an idempotent no-op.</t>
+<t>Where two distinct emissions are intended to be distinct nodes (for example, two retries of the same operation), emitters MUST ensure that some canonical field differs. Practical mechanisms include:</t>
+<ul>
+  <li>distinct <tt>parents</tt> linkage (and, if needed, a profile-defined sub-second field) so concurrent emissions remain distinguishable; Core <tt>timestamp</tt> values use whole seconds only (<xref target="sec-timestamp-format"/>);</li>
+  <li>a profile-defined nonce field that participates in canonicalization per <xref target="sec-canonicalization-of-profile-defined-fields"/>;</li>
+  <li>a sequence number embedded in <tt>agent.version</tt> or another canonical field;</li>
+  <li>distinct <tt>inputHash</tt> values when the underlying request payloads differ.</li>
+</ul>
+<t>Emitters that allow identical canonical content for genuinely-distinct actions accept the consequence that those actions collapse into a single ATP node. This is sometimes desirable (the same logical event observed twice) and sometimes a correctness bug (two retries that should be separately auditable). Profiles MAY mandate a freshness mechanism for emission contexts where collapse is unacceptable.</t>
+</section>
+</section>
+<section anchor="sec-scope-model" numbered="true">
+  <name>Scope Model</name>
+<t>Scope is REQUIRED on every ATP node.</t>
+<t>Scope identifies the transaction boundary to which the node belongs. In typical deployments, a scope corresponds to one workflow execution, one request lifecycle, or one business transaction. ATP does not impose a global meaning beyond that boundary concept. Scope values SHOULD be unique per transaction and SHOULD be shared by all nodes that belong to the same transaction; that is, scope is a transaction-level identifier, not a node-level identifier.</t>
+<t>Scope is an opaque string. ATP does not define or constrain its format. Implementations MAY use UUIDs, URNs, structured identifiers, or other stable values. Nodes that belong to the same transaction boundary SHOULD share the same scope value.</t>
+<t>Each <tt>parents</tt> entry is a nodeId. Because nodeId is content-addressed and scope is a field inside the referenced node rather than part of the parent reference itself, parent references are scope-agnostic by definition.</t>
+<t>Parent references MAY target nodes in the same scope or in different scopes. Cross-scope parent references are therefore PERMITTED.</t>
+<t>When a validator resolves a parent node and discovers that the parent's scope differs from the current node's scope, that difference is not an error condition. The validator MUST proceed with normal ATP verification. If a parent nodeId can be resolved to content but the parent's declared scope differs from the current node's scope (including when the parent was obtained through out-of-band retrieval), the validator MUST still apply full ATP validation to the parent content; scope mismatch alone is not a validation failure.</t>
+<t>A validator operating within a given verification context MUST attempt to resolve referenced parent nodes regardless of whether they are in the same scope or a different scope.</t>
+<t>If a referenced parent node is obtained and fails ATP verification, that parent is <strong>invalid</strong>.</t>
+<t>If a referenced parent node cannot be obtained in the current verification context -- including because the validator lacks access to the relevant scope, the referenced scope is unavailable, or verification is restricted to a single scope -- that parent is <strong>unresolved</strong>. The parent is not absent; it is simply not reachable in the current verification context.</t>
+<t>Validators MUST distinguish between invalid parents and unresolved parents.</t>
+<t>Full lineage verification requires access to all referenced parent nodes across all relevant scopes. Implementations MAY provide bounded or partial validation modes (see <xref target="sec-validation-modes"/>), but such modes MUST NOT treat unresolved parents as valid.</t>
+<t>Scope participates in nodeId computation in the same way as other canonical node fields. Two nodes that are identical except for different scope values therefore produce different nodeId values. This is intentional: the same action in two different transaction contexts is represented as two different ATP nodes.</t>
+<t>Because parent references are made to nodeId values rather than to scope membership, cross-scope heritage does not weaken ATP integrity semantics. It does, however, affect what a validator can practically resolve and verify in a given environment.</t>
+</section>
+<section anchor="sec-validation-modes" numbered="true">
+  <name>Validation Modes</name>
+<t>Validation modes are verifier-side behaviors. ATP nodes are written the same way regardless of which validation mode a future verifier uses. Validation modes therefore affect how heritage is read and checked, not how nodes are emitted.</t>
+<t>ATP defines four validation modes.</t>
+<section anchor="sec-full-recursive-validation" numbered="true">
+  <name>Full Recursive Validation</name>
+<t>In full recursive validation, the validator resolves every parent recursively back to every reachable root node within the available verification context. Each traversed node MUST be canonicalized, its nodeId MUST be recomputed, its signature MUST be verified, and the traversed heritage MUST satisfy ATP DAG constraints, including acyclicity.</t>
+<t>This mode provides the strongest lineage claim and is appropriate for incident forensics, regulatory audit, and dispute resolution. Full recursive validation is the only mode that establishes full lineage validity per <xref target="sec-verification"/>.</t>
+</section>
+<section anchor="sec-bounded-validation" numbered="true">
+  <name>Bounded Validation</name>
+<t>In bounded validation, the validator declares a verification boundary, such as a depth horizon (e.g., "verify this node and 3 generations of parents") or a time horizon (e.g., "verify back to nodes created after timestamp T"). Every node within that declared boundary MUST be fully validated according to ATP rules. Parent nodes beyond the declared boundary are not re-verified in that validation run and MUST be reported as out-of-horizon.</t>
+<t>This mode is appropriate for operational health checks, real-time monitoring, and performance-constrained environments. Bounded validation establishes lineage validity only within its declared horizon.</t>
+</section>
+<section anchor="sec-tip-validation" numbered="true">
+  <name>Tip Validation</name>
+<t>In tip validation, the validator verifies only the node under inspection. The node MUST be canonicalized, its nodeId MUST be recomputed, and its signature MUST be verified. Declared parent references MUST be checked for structural presence, but parent nodes are not resolved or verified.</t>
+<t>This mode is appropriate for ingestion-time integrity checks and other scenarios where the primary question is whether the node itself arrived intact. Tip validation establishes node-level integrity per <xref target="sec-verification"/> but does not establish lineage validity.</t>
+</section>
+<section anchor="sec-redacted-lineage-validation" numbered="true">
+  <name>Redacted-Lineage Validation</name>
+<t>In redacted-lineage validation, the validator is given a partial lineage in which one or more nodes are intentionally withheld for confidentiality, access-control, or privacy reasons. A withheld node MAY be represented by nodeId alone. In this mode, the validator can confirm that downstream nodes reference specific parent nodeIds, but cannot validate the withheld node's content or signature unless the withheld node is later made available.</t>
+<t>Withheld nodes are distinct from unresolved nodes. A withheld node is intentionally omitted but acknowledged. An unresolved node is one that the validator could not obtain in the current verification context.</t>
+<t>The distinction between withheld and unresolved is communicated to the validator out-of-band: it is the responsibility of the party providing the chain (the chain-bundle producer, the API endpoint, the audit-export tool, or equivalent) to declare which nodeIds are withheld. ATP Core does not define a normative protocol for this declaration; in practice, deployments use an explicit <tt>withheldNodeIds</tt> list in the chain-exchange envelope (<xref target="sec-chain-exchange-patterns"/>), an out-of-band agreement between the auditor and the audited party, or a profile-defined sentinel in node payloads. Validators MUST NOT infer withheld status from absence alone -- absence is unresolved unless explicitly declared withheld.</t>
+<t>This mode is appropriate for cross-organization audits and permissioned verification contexts where not all parties have access to all nodes.</t>
+</section>
+<section anchor="sec-minimum-support-and-validation-results" numbered="true">
+  <name>Minimum Support and Validation Results</name>
+<t>Implementations MUST support tip validation at minimum.</t>
+<t>Implementations that claim support for full lineage verification (i.e., the full recursive validation mode defined in <xref target="sec-full-recursive-validation"/>) MUST implement that mode and MUST report results in the format defined in <xref target="sec-validation-result-format"/>.</t>
+<t>Bounded validation and redacted-lineage validation are OPTIONAL. When implemented, they MUST clearly report validation depth, out-of-horizon nodes, unresolved nodes, and withheld nodes as applicable.</t>
+<t>A validation result MUST include, at minimum:</t>
+<ul>
+  <li>the validation mode used;</li>
+  <li>the set of verified nodes;</li>
+  <li>the set of invalid nodes, if any;</li>
+  <li>the set of unresolved nodes, if any;</li>
+  <li>the set of withheld nodes, if any;</li>
+  <li>the set of out-of-horizon nodes, if any;</li>
+  <li>the set of key-unresolved nodes, if any; and</li>
+  <li>the set of profile-unresolved nodes, if any.</li>
+</ul>
+<t>No validation mode may silently suppress unresolved, withheld, invalid, out-of-horizon, key-unresolved, or profile-unresolved lineage gaps.</t>
+</section>
+<section anchor="sec-validation-result-format" numbered="true">
+  <name>Validation Result Format</name>
+<t><strong><tt>lineageIncomplete</tt></strong> (array of strings): The
+<tt>nodeId</tt> hex strings of nodes that established node-level
+integrity (<xref target="sec-verification"/>, conditions 1, 2, 3 and
+6) but whose lineage validity could not be established because at
+least one parent that the selected mode requires to be resolved is
+invalid, unresolved, keyUnresolved, or itself lineageIncomplete.
+The condition is transitive: a node with a lineageIncomplete parent
+is itself lineageIncomplete. This category applies only in the
+"full" and "bounded" modes, and in the "redacted" mode for gaps
+other than declared-withheld parents. It is never populated in
+"tip" mode. A parent that is reported in <tt>outOfHorizon</tt> in
+bounded mode, or in <tt>withheld</tt> in redacted mode, does not by
+itself place a child in this category.</t>
+<t>A <tt>nodeId</tt> MUST NOT appear in both <tt>verified</tt> and
+<tt>lineageIncomplete</tt>. In modes that resolve parents,
+<tt>verified</tt> therefore contains only nodes whose lineage was
+established within the mode's limits.</t>
+<t>Implementations MAY include an OPTIONAL <tt>lineageBlockers</tt>
+object, keyed by <tt>nodeId</tt> hex string, whose values are arrays
+of the nearest ancestor <tt>nodeId</tt>s that caused the node to be
+lineageIncomplete.</t>
+<t>Validation results MUST be expressed as a JSON object with the following top-level keys:</t>
+<sourcecode type="json"><![CDATA[
+{
+  "mode": "full",
+  "boundary": {},
+  "verified": [],
+  "lineageIncomplete": [],
+  "invalid": [],
+  "unresolved": [],
+  "withheld": [],
+  "outOfHorizon": [],
+  "keyUnresolved": [],
+  "profileUnresolved": [],
+  "relayFidelity": {}
+}
+]]></sourcecode>
+<t>The fields are defined as follows:</t>
+<ul>
+  <li><strong><tt>mode</tt></strong> (string): The validation mode used for this result. MUST be one of <tt>"full"</tt>, <tt>"bounded"</tt>, <tt>"tip"</tt>, or <tt>"redacted"</tt>, corresponding to the validation modes defined in <xref target="sec-full-recursive-validation"/> through <xref target="sec-redacted-lineage-validation"/>.</li>
+  <li><strong><tt>boundary</tt></strong> (object, OPTIONAL): When <tt>mode</tt> is <tt>"bounded"</tt>, the declared verification boundary that was applied (<xref target="sec-bounded-validation"/>). REQUIRED when <tt>mode</tt> is <tt>"bounded"</tt> and SHOULD be omitted otherwise. The object MUST contain at least one of: <tt>"depth"</tt> (integer -- the parent-generation depth checked) or <tt>"sinceTimestamp"</tt> (RFC 3339 string -- the time horizon checked). Implementations MAY include additional implementation-specific boundary descriptors. The <tt>boundary</tt> object makes bounded-validation results self-describing so that operators and downstream auditors know exactly what was verified.</li>
+  <li><strong><tt>verified</tt></strong> (array of strings): The nodeId hex strings of all nodes that passed the validation checks applicable to the selected validation mode (<xref target="sec-full-recursive-validation"/> through <xref target="sec-redacted-lineage-validation"/>). Tip validation establishes node-level integrity only; full recursive validation establishes full lineage validity (see <xref target="sec-verification"/>). Implementations MUST NOT represent <tt>verified</tt> entries from non-full modes as full lineage validation.</li>
+  <li><strong><tt>invalid</tt></strong> (array of strings): The nodeId hex strings of nodes that failed ATP validation. Causes include, but are not limited to, canonicalization failure, nodeId mismatch, signature failure, acyclicity violation, and strict-mode profile-resolution failure as defined in <xref target="sec-canonicalization-of-profile-defined-fields"/>. Profiles MAY define additional invalidity causes; such causes MUST be enumerated in the profile specification.</li>
+  <li><strong><tt>unresolved</tt></strong> (array of strings): The nodeId hex strings of parent nodes that could not be obtained in the current verification context.</li>
+  <li><strong><tt>withheld</tt></strong> (array of strings): The nodeId hex strings of nodes that were intentionally omitted but acknowledged in a redacted-lineage context (<xref target="sec-redacted-lineage-validation"/>).</li>
+  <li><strong><tt>outOfHorizon</tt></strong> (array of strings): The nodeId hex strings of nodes lying outside the declared validation boundary in bounded validation (<xref target="sec-bounded-validation"/>).</li>
+  <li><strong><tt>keyUnresolved</tt></strong> (array of strings): The nodeId hex strings of nodes whose issuer public key could not be retrieved for the (<tt>issuerId</tt>, <tt>keyId</tt>) pair, preventing signature verification (<xref target="sec-verification"/>).</li>
+  <li><strong><tt>profileUnresolved</tt></strong> (array of strings): The nodeId hex strings of nodes whose <tt>profile</tt> value was not recognized by the validator (per <xref target="sec-canonicalization-of-profile-defined-fields"/>). In permissive mode, a profile-unresolved node MAY still pass ATP Core validation and appear in <tt>verified</tt>; in strict mode it is also reported in <tt>invalid</tt>. Profile-unresolved nodes are always reported in this category so that operators can detect interoperability gaps.</li>
+  <li><strong><tt>relayFidelity</tt></strong> (object, OPTIONAL): An object keyed by nodeId hex string, with values indicating the relay fidelity state of relay nodes as defined in <xref target="sec-relay-fidelity-validation-states"/>. Permitted values are <tt>"Verified"</tt>, <tt>"Asserted"</tt>, and <tt>"Contradicted"</tt>.</li>
+</ul>
+<t>Absent categories MUST be represented as empty arrays, not omitted. The <tt>relayFidelity</tt> object MAY be omitted when no relay nodes are present in the validated set. The <tt>boundary</tt> object MUST be present when <tt>mode</tt> is <tt>"bounded"</tt> and SHOULD be omitted in other modes. Profiles MAY extend this structure with additional keys.</t>
+</section>
+<section anchor="sec-atp-core-conformance" numbered="true">
+  <name>ATP Core Conformance</name>
+<t>An implementation is <strong>ATP Core conformant</strong> if it satisfies all of the following requirements:</t>
+<ul>
+  <li>canonicalizes nodes according to RFC 8785 JCS as required by <xref target="sec-canonicalization"/>;</li>
+  <li>computes <tt>nodeId</tt> per <xref target="sec-node-identity"/>, including all required fields and any <tt>profile</tt> field when present;</li>
+  <li>generates and verifies Ed25519 signatures per <xref target="sec-signature-algorithm"/> and <xref target="sec-signature-computation"/>;</li>
+  <li>enforces acyclicity per <xref target="sec-data-model"/>;</li>
+  <li>implements at least tip validation (<xref target="sec-tip-validation"/>);</li>
+  <li>produces validation results in the format defined by <xref target="sec-validation-result-format"/>, including all required result categories;</li>
+  <li>distinguishes invalid, unresolved, withheld, out-of-horizon, key-unresolved, and profile-unresolved nodes per <xref target="sec-minimum-support-and-validation-results"/>;</li>
+  <li>treats the <tt>atp:</tt> action-type prefix as reserved per <xref target="sec-core-action-types"/>;</li>
+  <li>passes all golden test vectors published in <xref target="ATP-TEST-VECTORS"/> for canonicalization, <tt>nodeId</tt> computation, and Ed25519 signature verification.</li>
+</ul>
+<t>ATP Core conformance is the floor required for any ATP implementation.</t>
+<t><strong>Profile conformance is always additive.</strong> An implementation that is ATP Core conformant MAY additionally claim conformance with one or more profiles identified and defined per <xref target="sec-profile-framework"/>. Profile conformance requires both ATP Core conformance and satisfaction of all rules declared by the relevant profile. A profile MUST NOT weaken any ATP Core conformance requirement (<xref target="sec-data-model"/>, <xref target="sec-signing-and-verification"/>).</t>
+<t>Composite conformance labels (such as ATP-MCP-L1, ATP-MCP-L2, and ATP-MCP-L3) are not defined by ATP Core. Such labels are defined by individual profile specifications.</t>
+</section>
+</section>
+<section anchor="sec-security-considerations" numbered="true">
+  <name>Security Considerations</name>
+
+<t>ATP signatures prove that an issuer made a claim about a node. They do not, by themselves, prove that every claim carried in the node is true in the external world.</t>
+<section anchor="sec-key-separation" numbered="true">
+  <name>Key Separation</name>
+<t>ATP signs a bare 32-octet SHA-256 digest with no context string. A
+signature over such a digest is indistinguishable from a signature
+produced by any other protocol that signs 32-octet values with the
+same key. If an ATP signing key were also used elsewhere, a
+signature obtained in the other protocol could be presented as an
+ATP node signature, or the reverse. For this reason
+<xref target="sec-signature-computation"/> requires that ATP signing
+keys be used only for ATP. A future revision may add a signing
+context string; doing so would change every signature and is
+deferred to keep existing test vectors stable.</t>
+</section>
+<section anchor="sec-security-signature-verification-strictness" numbered="true">
+  <name>Signature Verification Strictness</name>
+<t>Ed25519 implementations are known to differ in edge cases, such
+as non-canonical <tt>S</tt> values, non-canonical point encodings
+and small-order points. Validators that disagree on these cases can
+reach different verdicts on the same node, which breaks the
+determinism ATP relies on.
+<xref target="sec-signature-verification-strictness"/> therefore
+fixes the verification rules, and
+<xref target="ATP-TEST-VECTORS"/> includes negative vectors for
+them.</t>
+</section>
+<section anchor="sec-parser-differentials" numbered="true">
+  <name>Parser Differentials</name>
+<t><tt>nodeId</tt> is computed over a parsed and re-serialized node.
+If two validators parse the same octets into different values, for
+example by keeping different occurrences of a duplicated member
+name, they can attribute different content to one <tt>nodeId</tt>.
+The I-JSON requirement in <xref target="sec-canonicalization"/>
+removes the inputs on which conforming JSON parsers are known to
+diverge.</t>
+</section>
+<section anchor="sec-resource-exhaustion" numbered="true">
+  <name>Resource Exhaustion</name>
+<t>Full recursive validation follows parents to arbitrary depth, and
+a single node may list many parents or nest objects deeply. An
+attacker who can supply nodes can therefore impose unbounded work.
+Validators MUST enforce limits on heritage depth, on the number of
+parents per node, on object nesting depth and on node size, and
+MUST report nodes beyond such limits rather than silently
+truncating validation.
+<xref target="sec-performance-budget-guidance"/> gives guidance on
+choosing the limits.</t>
+</section>
+<section anchor="sec-key-compromise-backdating-equivocation" numbered="true">
+  <name>Key Compromise, Backdating, and Equivocation</name>
+<t>Timestamps are issuer assertions
+(<xref target="sec-timestamp-trust"/>). An attacker holding a
+compromised issuer key can therefore emit nodes that carry any
+timestamp, including ones that predate the compromise. An issuer,
+compromised or not, can also sign two different children of the same
+parent and show different children to different parties. ATP Core
+detects neither. Deployments that need evidence of when a node
+existed, or need to detect conflicting children, SHOULD register
+<tt>nodeId</tt>s with an append-only transparency service such as
+one conforming to <xref target="RFC9943"/>, whose receipts supply
+operator-independent time and inclusion evidence.</t>
+</section>
+<section anchor="sec-credentials-in-authcontext" numbered="true">
+  <name>Credentials in authContext</name>
+<t><tt>actor.authContext</tt> is a free-form string that becomes part
+of the permanent, signed, and potentially widely replicated record.
+It MUST NOT contain bearer tokens, passwords, private keys, or any
+other value that grants access. Deployments that need to tie a node
+to a specific authorization artifact SHOULD include a hash of that
+artifact, in the Payload Hash Format of
+<xref target="sec-payload-hash-format"/>, or an identifier that is
+not itself a credential.</t>
+</section>
+
+<section anchor="sec-relay-node-trust-semantics" numbered="true">
+  <name>Relay Node Trust Semantics</name>
+<t>A <strong>relay node</strong> is a node whose action semantics assert that input was forwarded without modification. Relay nodes deserve a dedicated treatment because they have a unique trust property: the relay issuer's signature proves that the issuer <em>made the non-modification claim</em>, but it does not prove the claim is true. Other ATP action types (<tt>atp:request</tt>, <tt>atp:completion</tt>, <tt>atp:failure</tt>, <tt>atp:decision</tt>) carry claims that are intrinsic to the issuer's own activity (the issuer asked, completed, failed, or decided). Relay nodes are the only ATP-Core action type whose claim is <em>about another party's data</em>, which is why their fidelity must be evaluated separately. ATP defines <tt>atp:relay</tt> (<xref target="sec-core-action-types"/>) as the canonical core action type for relay nodes. A common indicator within <tt>atp:relay</tt> nodes is <tt>inputHash</tt> equals <tt>outputHash</tt>. Profiles MAY define additional relay action types, provided their semantics are explicitly declared per <xref target="sec-minimum-profile-contract"/>.</t>
+<t>Profiles that define relay-like action types MUST state how relay fidelity is evaluated for those types. Permitted evaluation methods include: payload hash equality (e.g., <tt>inputHash</tt> equals <tt>outputHash</tt>), direct-origin signature validation, dual-parent lineage (per the mitigations in this section), or profile-specific rules. Profile-defined relay types whose fidelity evaluation is not declared MUST be treated by validators as equivalent to <tt>atp:relay</tt>.</t>
+<t>A node whose action semantics imply relay, forwarding, or pass-through behavior MUST be understood as an issuer assertion of fidelity. The signature binds the relay issuer to that claim, but does not independently prove payload integrity across the relay boundary.</t>
+<t>Validators MUST NOT treat a relay node's signature as proof that the referenced payload was unmodified. The signature proves only that the relay issuer made a non-modification claim.</t>
+<t>When a downstream node is itself signed by a separate issuer, validators SHOULD verify the downstream node's signature directly rather than relying solely on the relay node's fidelity claim.</t>
+<t>When the originating node that a relay claims to forward is reachable via parent references or other available lineage context, validators SHOULD verify the originating node's signature directly. This is the strongest fidelity check available within ATP.</t>
+<t>When the originating node is unreachable, including because it is cross-scope, access-restricted, unresolved, or withheld, validators SHOULD report relay fidelity as asserted rather than verified.</t>
+<t>Implementations that require strong relay fidelity guarantees SHOULD adopt one or more of the following mitigations:</t>
+<ul>
+  <li><strong>Direct parent resolution:</strong> The consuming node references the originating node (skipping the relay) so that validators can verify the original signature directly.</li>
+  <li><strong>Dual-parent pattern:</strong> The consuming node references both the relay node and the originating node, preserving both the chain-of-custody path and a direct verification path.</li>
+  <li><strong>Out-of-band payload verification:</strong> The validator independently retrieves the payload identified by the relevant hash and recomputes integrity outside the ATP graph.</li>
+</ul>
+<t>Relay nodes remain valid and useful ATP nodes. They record that a boundary was crossed, who claims to have crossed it, and what fidelity assertion was made. ATP treats relay nodes as accountability artifacts, not as automatic proof of non-modification.</t>
+<t>If a relay issuer's fidelity assertion is later shown to be false, the signed relay node remains evidence that the issuer made that assertion.</t>
+</section>
+<section anchor="sec-relay-fidelity-validation-states" numbered="true">
+  <name>Relay Fidelity Validation States</name>
+<t>For relay-node fidelity, validation results SHOULD distinguish at least the following states:</t>
+<ul>
+  <li><strong>Verified:</strong> The originating node is resolved, signatures validate, and the relay claim is consistent with the originating material.</li>
+  <li><strong>Asserted:</strong> The relay node is validly signed but the originating node was not independently verified.</li>
+  <li><strong>Contradicted:</strong> The originating node is resolved and the relay claim does not match the originating material.</li>
+</ul>
+<t>These states are specific to relay fidelity semantics and do not replace the broader ATP validation result categories defined in <xref target="sec-minimum-support-and-validation-results"/>.</t>
+</section>
+<section anchor="sec-timestamp-trust" numbered="true">
+  <name>Timestamp Trust</name>
+<t>The <tt>timestamp</tt> field is a claimed value set by the node emitter. ATP does not define a trusted time source or require synchronized clocks. Validators SHOULD treat timestamps as issuer assertions subject to the same trust considerations as other node content.</t>
+</section>
+<section anchor="sec-signature-scope" numbered="true">
+  <name>Signature Scope</name>
+<t>An ATP signature covers the nodeId, which is derived from the canonical node content. The signature does not cover the referenced payloads themselves -- only their hashes. Payload integrity depends on the hash algorithm and the availability of the original payload for recomputation.</t>
+</section>
+<section anchor="sec-trust-model-summary" numbered="true">
+  <name>Trust Model Summary</name>
+<t>ATP's security guarantees rest on three trust assumptions. These assumptions are stated individually elsewhere in this document and are collected here for the benefit of implementers and reviewers.</t>
+<ul>
+  <li><strong>Issuer key availability.</strong> Verifiers are assumed to be able to retrieve issuer public keys for any (<tt>issuerId</tt>, <tt>keyId</tt>) pair that appears in the chain. Key discovery is intentionally deferred to deployments and future specifications (<xref target="sec-key-lifecycle"/>). When a key is unavailable, the affected node is <tt>keyUnresolved</tt> rather than invalid (<xref target="sec-verification"/>).</li>
+  <li><strong>Node availability.</strong> Full lineage verification requires that all referenced parent nodes be retrievable in the verifier's verification context. ATP does not define a federation or cross-scope retrieval protocol (<xref target="sec-cross-scope-resolution"/>). Where parent nodes are unavailable, the affected nodes are <tt>unresolved</tt> and lineage validity is not established (<xref target="sec-verification"/>, <xref target="sec-minimum-support-and-validation-results"/>).</li>
+  <li><strong>Issuer honesty (within signature scope).</strong> ATP signatures prove that an issuer made a claim about a node. They do not prove that the claim is true in the external world. Timestamps (<xref target="sec-timestamp-trust"/>), action types, and payload references are all issuer assertions subject to operational trust in the issuer.</li>
+</ul>
+<t>These assumptions are deliberate scope choices, not omissions. ATP composes with identity, authorization, transparency, and federation mechanisms that strengthen each assumption (<xref target="sec-suppression-and-anti-suppression"/>, <xref target="sec-c-6-transparency-and-supply-chain-provenance"/>) without expanding ATP Core.</t>
+</section>
+<section anchor="sec-suppression-and-anti-suppression" numbered="true">
+  <name>Suppression and Anti-Suppression</name>
+<t>ATP detects modification but not suppression. A malicious operator who controls a node store MAY withhold individual nodes from a verifier. A verifier observing <tt>unresolved</tt> parents cannot, on the basis of ATP alone, distinguish between (a) nodes that exist elsewhere but are unreachable in the current verification context, (b) nodes that have been deliberately suppressed, and (c) nodes that were never written.</t>
+<t>ATP Core does not provide an anti-suppression mechanism. This is a deliberate scope choice, not an oversight.</t>
+<t>Deployments that require operator-independent assurance against suppression SHOULD layer ATP with an append-only transparency service such as a SCITT-compatible service <xref target="RFC9943"/>. In such a composition:</t>
+<ul>
+  <li>ATP nodes (or their <tt>nodeId</tt> values) are published to the transparency service as signed statements;</li>
+  <li>the transparency service provides operator-independent evidence that the node existed at a given time and was not retroactively suppressed;</li>
+  <li>ATP retains its causal-DAG and lineage-validity semantics over the underlying chain.</li>
+</ul>
+<t>Profiles MAY define normative SCITT-compatible or equivalent publication patterns. ATP Core does not require such layering, but the protocol is designed to compose with it (see <xref target="sec-c-6-transparency-and-supply-chain-provenance"/> for further discussion of the SCITT relationship).</t>
+</section>
+<section anchor="sec-replay-and-scope-binding" numbered="true">
+  <name>Replay and Scope Binding</name>
+<t>Because <tt>scope</tt> participates in canonicalization (<xref target="sec-canonicalization"/>, <xref target="sec-scope-model"/>), a node's <tt>nodeId</tt> is bound to its declared scope. A literal replay of a signed node into a different scope produces a different recomputed <tt>nodeId</tt>; the original signature does not validate against that different <tt>nodeId</tt>. Replay across scopes is therefore not, by itself, a node-integrity attack.</t>
+<t>However, a malicious party who obtains a signed node MAY present that node in a different verification context where its declared scope value happens to be permitted or expected. Validators MUST evaluate scope semantics within their verification context and MUST NOT accept a node as evidence of an action in a verification context whose scope semantics do not match the scope value declared by the node.</t>
+<t>ATP Core does not define an anti-replay mechanism beyond scope binding. Deployments requiring stronger anti-replay protection (for example, freshness guarantees against same-scope replays after a long interval) SHOULD layer additional context-binding outside the protocol -- for example, transport-layer freshness tokens, audited delivery channels, or profile-defined nonce fields participating in canonicalization per <xref target="sec-canonicalization-of-profile-defined-fields"/>.</t>
+</section>
+</section>
+<section anchor="sec-privacy-considerations" numbered="true">
+  <name>Privacy Considerations</name>
+
+<t>ATP nodes carry metadata about actions, identities, and causal relationships. Even when payload content is stored externally and referenced only by hash, the existence of a node in an ATP chain reveals that an action was taken, by which agent, on behalf of which actor (when present), and in what causal relationship to other actions.</t>
+<section anchor="sec-guessable-payload-hashes" numbered="true">
+  <name>Guessable Payload Hashes</name>
+<t>A payload hash hides the payload only if the payload is hard to
+guess. When the set of likely payloads is small, as for a yes/no
+decision, a choice among a few options, or a short structured
+record, anyone who can read the node can confirm a guess by hashing
+it. Deployments that hash sensitive, low-entropy payloads SHOULD
+include a secret random value of at least 128 bits in the hashed
+octets and store that value with the payload, so that the hash
+cannot be confirmed without access to the payload store.</t>
+</section>
+<section anchor="sec-data-minimization" numbered="true">
+  <name>Data Minimization</name>
+<t>ATP's design supports data minimization by carrying hashes rather than full payloads. However, the metadata fields themselves -- including <tt>actorId</tt>, <tt>agentId</tt>, <tt>issuerId</tt>, and <tt>action.type</tt> -- may constitute personal data or sensitive operational data depending on the deployment context and applicable jurisdiction.</t>
+<t>Implementations SHOULD evaluate whether node metadata requires protection under applicable privacy regulations and SHOULD apply access controls to ATP node storage and retrieval accordingly.</t>
+</section>
+<section anchor="sec-deletion-and-retention-tension" numbered="true">
+  <name>Deletion and Retention Tension</name>
+<t>ATP's tamper-evident properties create a tension with data subject rights such as the right to erasure under GDPR and similar regulations.</t>
+<t>Payloads referenced by <tt>inputHash</tt> and <tt>outputHash</tt> are stored outside the ATP chain and MAY be deleted independently without invalidating the chain's structural integrity. The hash references will remain, but the referenced content will no longer be retrievable.</t>
+<t>Node metadata within the chain -- including <tt>actorId</tt>, <tt>agentId</tt>, timestamps, and causal relationships -- cannot be removed without invalidating the node's signature and the nodeId references of all descendant nodes.</t>
+<t>Implementations that must accommodate deletion rights SHOULD consider the following approaches:</t>
+<ul>
+  <li>Store personal data exclusively in external payloads referenced by hash, not in node metadata fields.</li>
+  <li>Use pseudonymous or indirect identifiers in <tt>actorId</tt> that can be dereferenced through a separate, deletable mapping.</li>
+  <li>Apply redacted-lineage validation (<xref target="sec-redacted-lineage-validation"/>) so that nodes containing personal data can be withheld from verification contexts when required.</li>
+</ul>
+<t>ATP does not define a normative deletion or redaction mechanism. The tension between immutable audit evidence and deletion rights is an operational and legal concern that deployments must address in the context of their applicable regulatory requirements.</t>
+</section>
+<section anchor="sec-chain-existence-as-metadata" numbered="true">
+  <name>Chain Existence as Metadata</name>
+<t>Even when all payload content and personal identifiers are removed or pseudonymized, the existence of an ATP chain itself -- including its structure, depth, timing, and issuer distribution -- may reveal operationally sensitive information. Implementations SHOULD apply appropriate access controls to chain metadata, not only to payload content.</t>
+</section>
+<section anchor="sec-pseudonymous-identifiers-and-post-deletion-verification" numbered="true">
+  <name>Pseudonymous Identifiers and Post-Deletion Verification</name>
+<t>Implementations SHOULD use pseudonymous or indirect identifiers in <tt>actorId</tt> rather than directly identifying personal data. A separate identity-resolution service SHOULD manage the mapping between pseudonymous identifiers and real identities.</t>
+<t>When a data subject exercises a right to erasure, the RECOMMENDED approach is to delete the identity-resolution mapping and any external payloads containing personal data. The ATP chain itself is not modified.</t>
+<t>After identity-resolution deletion, the <tt>actorId</tt> value remains in the chain but can no longer be resolved to a natural person. The chain's structural integrity, signatures, and causal relationships are unaffected.</t>
+<t>Implementations MUST NOT rely on <tt>actorId</tt> opacity alone as a privacy control. If the <tt>actorId</tt> value itself is directly identifying -- for example an email address or employee number -- deletion of the mapping service does not remove the personal data from the chain. Pseudonymous identifiers are therefore RECOMMENDED as the default.</t>
+<t>Following deletion of identity mappings or external payloads, validators SHOULD use redacted-lineage validation as described in <xref target="sec-redacted-lineage-validation"/> when verifying historical chains that include now-unresolvable or now-withheld elements.</t>
+<t>Deployments subject to data protection regulations SHOULD document their ATP data retention and deletion procedures as part of their privacy impact assessment.</t>
+</section>
+</section>
+<section anchor="sec-operational-considerations" numbered="true">
+  <name>Operational Considerations</name>
+<section anchor="sec-key-lifecycle" numbered="true">
+  <name>Key Lifecycle</name>
+<t>ATP does not define a key management protocol, key discovery mechanism, or trust registry. However, ATP deployments depend on durable issuer key practices in order for signed nodes to remain verifiable over time.</t>
+<t>Each issuer controls its own key material. No issuer is expected to hold another issuer's private key. Private key storage is implementation-specific and MAY use HSMs, cloud KMS systems, local keystores, or other suitable mechanisms. The operational requirement is that the private key associated with a given <tt>issuer.keyId</tt> can generate ATP-conformant Ed25519 signatures, and that validators can obtain the corresponding public key for verification.</t>
+<t>An issuer MAY rotate signing keys at any time by beginning to sign new nodes with a new keyId.</t>
+<t>Previously signed nodes remain valid after rotation. A node continues to identify the key that was active when it was signed through its <tt>issuer.keyId</tt> value.</t>
+<t>An issuer MUST maintain the ability to provide the public key for any keyId that appears in its signed nodes for as long as those nodes may need to be verified.</t>
+<t>ATP Core does not define a public key discovery mechanism or a normative well-known URI path for key publication. Implementations MAY use well-known URIs, JWK sets, append-only key logs, out-of-band registries, or other equivalent mechanisms that allow a validator to retrieve the public key for a given (<tt>issuerId</tt>, <tt>keyId</tt>) pair. A future ATP specification or profile MAY define a normative key-discovery path; this document does not.</t>
+<t>This deferral creates a practical interoperability consequence: until a normative key-discovery path exists, two implementations that wish to cross-verify each other's chains MUST agree on a key-retrieval mechanism out-of-band. Cross-organization verification is therefore fragmented at the discovery layer even though node integrity, identity computation, and signature verification are deterministic. Profiles requiring open cross-organization verifiability SHOULD define a key-publication mechanism (for example, a JWK set served at a profile-specified well-known URI) and SHOULD declare it as a profile conformance requirement.</t>
+<t>Key retirement does not invalidate previously signed nodes. The nodeId and signature remain correct; only the deployment's ability to verify those nodes depends on continued public key availability.</t>
+<t>Implementations SHOULD plan for indefinite retention of public keys for any keyId that has been used in production signing.</t>
+<t>Deployments are RECOMMENDED to publish or otherwise maintain an append-only public key record per issuer so that historical keyIds remain resolvable even after active signing use has ended.</t>
+</section>
+<section anchor="sec-requestcompletion-pairing" numbered="true">
+  <name>Request/Completion Pairing</name>
+<t>ATP does not require a single emission timing model for all action types. However, when implementations require auditable evidence of attempted, in-progress, completed, or failed actions, a paired request/completion pattern is RECOMMENDED.</t>
+<t>In this pattern, a <strong>request node</strong> (typically <tt>atp:request</tt>, see <xref target="sec-core-action-types"/>) records intent. The request node carries <tt>inputHash</tt> covering the request payload. <tt>outputHash</tt> is omitted (not zeroed or set to a placeholder -- absent). Per <xref target="sec-canonicalization"/>, null-valued fields are omitted during canonicalization, so this is consistent with deterministic identity computation.</t>
+<t>A <strong>completion node</strong> (typically <tt>atp:completion</tt>, see <xref target="sec-core-action-types"/>) records outcome. The completion node references the request node as a parent. The completion node SHOULD carry an <tt>inputHash</tt> matching the request node's <tt>inputHash</tt> so that validators can determine that both nodes describe the same logical action. The completion node carries <tt>outputHash</tt> covering the response or result payload.</t>
+<t>A <strong>failure</strong> is also represented as a completion node, typically using <tt>atp:failure</tt> (<xref target="sec-core-action-types"/>). The relevant <tt>action.type</tt> SHOULD indicate failure semantics, and <tt>outputHash</tt> SHOULD cover any resulting error payload.</t>
+<t>ATP does not mandate that profiles use the core <tt>atp:request</tt>, <tt>atp:completion</tt>, and <tt>atp:failure</tt> types directly. Profiles MAY define more specific action types that follow the same emission semantics, provided the profile specification declares the mapping (per <xref target="sec-minimum-profile-contract"/>).</t>
+<t>If an emitter crashes or otherwise fails between request-node emission and completion-node emission, the unpaired request node remains a valid ATP node. Validators and operational tooling SHOULD report unpaired request nodes as open or incomplete rather than invalid. This behavior is intentional and provides crash-recovery and interrupted-action visibility.</t>
+</section>
+<section anchor="sec-cross-scope-resolution" numbered="true">
+  <name>Cross-Scope Resolution</name>
+<t>Cross-scope parent verification is an operational capability, not a separate ATP protocol. Implementations that expect validators to verify nodes across scope boundaries SHOULD ensure that validators can retrieve referenced nodes across those boundaries.</t>
+<t>This MAY be achieved through a shared node store, an API-based retrieval mechanism, or another exchange mechanism. ATP does not define a federation protocol or a required topology for cross-scope node access.</t>
+</section>
+<section anchor="sec-actor-mapping-guidance" numbered="true">
+  <name>Actor Mapping Guidance</name>
+<t>In governed deployments, actor omission SHOULD be uncommon. Most ATP nodes ought to identify the principal whose authority the agent is acting under.</t>
+<t><tt>actor</tt> represents the delegating principal. That principal MAY be human or non-human.</t>
+<t>When a human initiates an action, <tt>actorId</tt> SHOULD identify the human principal and <tt>authContext</tt> SHOULD identify the authentication mechanism, such as SAML or OIDC.</t>
+<t>When a machine-originated chain has no human initiator, <tt>actorId</tt> SHOULD identify the accountable service principal -- the service account, scheduled-job identity, CI/CD pipeline identity, managed identity, or equivalent non-human principal. <tt>authContext</tt> SHOULD identify the credential or trust mechanism used, such as workload identity, managed identity, service account, or API key.</t>
+<t>When there is genuinely no delegating principal and the agent is acting autonomously, <tt>actor</tt> MAY be omitted. Such omission is a meaningful signal: it indicates the action was not taken on behalf of an accountable principal. Implementations SHOULD treat frequent actor omission as a governance concern rather than as routine behavior. See <xref target="sec-node-schema"/> for the corresponding verifier rule on omission.</t>
+</section>
+<section anchor="sec-agent-versioning-guidance" numbered="true">
+  <name>Agent Versioning Guidance</name>
+<t>ATP does not mandate a versioning scheme for <tt>agent.version</tt>. Implementations MAY use semantic versions, date-based versions, commit hashes, or other distinguishable version identifiers.</t>
+<t>However, <tt>agent.version</tt> SHOULD change whenever the agent's decision-producing configuration changes. The governing test is <strong>configurational</strong>, not run-time behavioral: if the <em>configuration</em> that produces outputs changes such that the agent could produce a different output for the same input, the version SHOULD change. Run-time output variance that is intrinsic to the agent's design -- for example, a sampling LLM with no fixed seed producing different completions for identical prompts -- does NOT require a version bump on every emission. The version tracks the agent the way a software version tracks a binary: it changes when the binary changes, not when the binary processes different inputs.</t>
+<t>Changes that SHOULD trigger a new <tt>agent.version</tt> include, but are not limited to:</t>
+<ul>
+  <li>a software code change that alters decision logic (a refactor, a routing-rule change, a control-flow modification);</li>
+  <li>a model swap (for AI agents);</li>
+  <li>a prompt, template, or few-shot example change (for AI agents);</li>
+  <li>a tool-scope change that affects what tools the agent can select or invoke;</li>
+  <li>a policy-bundle, guardrail, or business-rule change that affects output behavior; and</li>
+  <li>a configuration change that affects output behavior, such as sampling parameters, retrieval settings, scoring weights, or generation parameters.</li>
+</ul>
+<t>Changes that ordinarily SHOULD NOT trigger a new <tt>agent.version</tt> include infrastructure-only changes that do not affect decision behavior, such as scaling changes, region failover, key rotation, logging changes, observability changes, or transport/protocol upgrades that do not alter the agent's decision logic. Run-time non-determinism (sampling, random-seed-based variation, time-of-day-dependent behavior) likewise does NOT trigger a version bump unless the <em>configuration</em> of that non-determinism changes.</t>
+<t>ATP cannot enforce correct version bumps at the protocol level. If an implementation changes agent behavior without changing <tt>agent.version</tt>, that is an implementation governance failure rather than a protocol ambiguity.</t>
+</section>
+<section anchor="sec-issuer-identity-granularity" numbered="true">
+  <name>Issuer Identity Granularity</name>
+<t>ATP does not prescribe a required granularity for <tt>issuerId</tt>. <tt>issuerId</tt> identifies a signing-authority boundary: the entity that controls the private key material and is accountable for the nodes it signs. That boundary MAY align with a tenant, a deployment, a region, a service, or another organizational unit.</t>
+<t>The governing principle is key custody. Nodes signed under the same <tt>issuerId</tt> share the same key-custody boundary. If two systems have independent key custody -- for example, different key storage, different rotation policies, or different operational teams -- they SHOULD use different <tt>issuerId</tt> values.</t>
+<t>Conversely, systems that share key custody MAY share an <tt>issuerId</tt>.</t>
+<t>Implementations SHOULD choose <tt>issuerId</tt> granularity such that compromise of one issuer's key material does not implicate nodes signed by a different issuer. This is the primary security constraint on <tt>issuerId</tt> design.</t>
+<t>The combination of <tt>issuerId</tt> and <tt>keyId</tt> MUST be unique within the relevant verification context. Two different issuers MUST NOT share a <tt>keyId</tt> value that maps to different keys within that context.</t>
+<t>ATP does not mandate whether <tt>issuerId</tt> maps to tenants, deployments, services, or regions. This is an operational design decision. An enterprise with centralized key custody MAY use one <tt>issuerId</tt> across multiple agents or services. A deployment with per-tenant or per-environment key isolation SHOULD use distinct <tt>issuerId</tt> values that reflect those custody boundaries.</t>
+</section>
+<section anchor="sec-storage-model-guidance" numbered="true">
+  <name>Storage Model Guidance</name>
+<t>ATP does not mandate a storage substrate. Implementations MAY use append-only logs, content-addressed object stores, relational databases, or other storage systems.</t>
+<t>In practice, three storage patterns are common:</t>
+<t><strong>Pattern A -- Append-only event log.</strong> Nodes are written sequentially to a log. Parent resolution is performed by index lookup or by a secondary index on <tt>nodeId</tt>. This pattern integrates naturally with event-sourced architectures and operational monitoring systems, but parent resolution across large graphs depends on effective indexing.</t>
+<t><strong>Pattern B -- Content-addressed object store.</strong> Nodes are stored keyed by <tt>nodeId</tt>. Because <tt>nodeId</tt> is derived from canonical node content, this pattern aligns closely with ATP's deterministic identity model and supports direct parent lookup by <tt>nodeId</tt>. However, temporal ordering and operational queryability may require additional indexing.</t>
+<t><strong>Pattern C -- Hybrid.</strong> Nodes are written to an append-only log for temporal ordering and operational queries, and are also indexed or stored by <tt>nodeId</tt> for efficient parent resolution. This pattern supports both operational visibility and efficient heritage traversal at the cost of greater implementation complexity.</t>
+<t>Regardless of storage choice, implementations MUST ensure that a node can be retrieved by <tt>nodeId</tt> with sufficient performance to support the validation modes the deployment intends to offer.</t>
+<t>Implementations that support full recursive validation (<xref target="sec-full-recursive-validation"/>) SHOULD ensure that parent resolution by <tt>nodeId</tt> remains efficient at scale, since recursive validation traverses the full heritage graph.</t>
+<t>Implementations MUST ensure that stored nodes are immutable once written. Mutation of a stored node invalidates its <tt>nodeId</tt>, breaks downstream parent references, and defeats ATP's tamper-evidence guarantees for any verifier that does not retain the original bytes. Implementations MAY enforce immutability through storage-engine constraints -- for example, write-once tables, content-addressed object stores, append-only logs, or <tt>BEFORE UPDATE</tt> triggers that reject row modifications.</t>
+<t>Storage-layer integrity checks, such as recomputing <tt>nodeId</tt> from stored content as an operational health measure, are RECOMMENDED. However, such checks are not a substitute for ATP validation.</t>
+</section>
+<section anchor="sec-permissioned-verifiability" numbered="true">
+  <name>Permissioned Verifiability</name>
+<t>ATP does not define an access-control model for node retrieval. Access control over who may retrieve and verify which nodes is an implementation and deployment concern.</t>
+<t>In practice, ATP deployments often serve multiple verification audiences with different access rights.</t>
+<t><strong>Tier 1 -- Full-chain verification.</strong> A verifier with unrestricted access to all relevant nodes and scopes can perform full recursive validation as defined in <xref target="sec-full-recursive-validation"/>.</t>
+<t><strong>Tier 2 -- Scoped verification.</strong> A verifier with access limited to particular scopes, issuers, time ranges, or other node attributes validates the nodes available in that verification context. Parents outside that boundary are reported as unresolved or out-of-horizon according to the applicable validation mode.</t>
+<t><strong>Tier 3 -- Redacted verification.</strong> A verifier is given a partial chain in which sensitive nodes are withheld and represented only by <tt>nodeId</tt> or by withheld-node placeholders consistent with <xref target="sec-redacted-lineage-validation"/>. The verifier can validate visible nodes, confirm visible chain structure, and transparently report withheld nodes.</t>
+<t>Implementations that serve multiple verification audiences SHOULD provide mechanisms to scope node access by verification context -- for example, by scope, by issuer, by time range, or by other node attributes.</t>
+<t>When a verification context restricts the nodes available to a verifier, the verifier MUST use the appropriate validation mode and MUST report any nodes that are unresolved, withheld, or out-of-horizon in the validation result.</t>
+<t>Implementations MAY offer a <strong>hash-only verification path</strong> in which a verifier is given only <tt>nodeId</tt> values and parent references without full node content. This allows the verifier to confirm chain structure and determine whether one node descends from another without access to the metadata of intermediate nodes.</t>
+<t>ATP does not define a protocol for permissioned export, redacted-chain generation, or verifier authorization. Those mechanisms remain implementation-specific.</t>
+</section>
+<section anchor="sec-deletion-and-redaction-operations" numbered="true">
+  <name>Deletion and Redaction Operations</name>
+<t>ATP does not define a deletion protocol, a redaction protocol, or an identity-resolution service. Those mechanisms remain implementation-specific.</t>
+<t>In practice, deployments can reduce privacy tension through three operational layers:</t>
+<t><strong>Layer 1 -- Keep personal data out of node metadata.</strong> Deployments SHOULD prefer pseudonymous identifiers in <tt>actorId</tt> and SHOULD avoid embedding directly identifying personal data in <tt>actorId</tt>, <tt>agentId</tt>, <tt>issuerId</tt>, or <tt>action.type</tt>.</t>
+<t><strong>Layer 2 -- Delete external payloads freely.</strong> Payloads referenced by <tt>inputHash</tt> and <tt>outputHash</tt> may be deleted independently of the ATP chain without breaking ATP structural integrity.</t>
+<t><strong>Layer 3 -- Verify post-deletion chains using the appropriate validation mode.</strong> After identity-resolution deletion or payload deletion, validators SHOULD use redacted-lineage validation or another appropriate restricted verification mode so that withheld or now-unresolvable content is reported transparently rather than treated as invalid.</t>
+<t>These operational practices do not eliminate the legal or governance tension between immutable evidence and deletion rights, but they make privacy-preserving ATP deployments practical without modifying the core protocol.</t>
+</section>
+<section anchor="sec-performance-budget-guidance" numbered="true">
+  <name>Performance Budget Guidance</name>
+<t>ATP does not define benchmark requirements. Performance depends on implementation language, hardware, storage design, graph shape, and validation mode. However, deployments SHOULD understand four distinct ATP cost centers.</t>
+<t><strong>Cost 1 -- Canonicalization.</strong> Canonicalization cost scales primarily with node count rather than with node complexity because ATP nodes are structurally small and regular. For most deployments, canonicalization is not the dominant validation cost.</t>
+<t><strong>Cost 2 -- Signing and signature verification.</strong> Ed25519 signing and verification are computationally lightweight for individual nodes. In bulk validation scenarios, signature verification cost becomes measurable but remains parallelizable because each node's signature is independent.</t>
+<t><strong>Cost 3 -- Parent resolution.</strong> The dominant performance cost in ATP validation is usually parent resolution: retrieving referenced nodes by <tt>nodeId</tt>. Implementations SHOULD optimize node retrieval by <tt>nodeId</tt> as a primary access pattern.</t>
+<t><strong>Cost 4 -- Lineage traversal.</strong> Full recursive validation traverses the entire heritage graph and therefore scales linearly with the number of reachable nodes in that heritage. Bounded validation caps traversal according to the declared horizon. Tip validation avoids heritage traversal entirely.</t>
+<t>Implementations that support full recursive validation (<xref target="sec-full-recursive-validation"/>) SHOULD ensure that parent resolution by <tt>nodeId</tt> remains efficient at scale, since recursive validation traverses the full heritage graph.</t>
+<t>Implementations that serve latency-sensitive validation requests SHOULD consider bounded validation (<xref target="sec-bounded-validation"/>) or tip validation (<xref target="sec-tip-validation"/>) for operational use cases, reserving full recursive validation for audit and forensic contexts.</t>
+<t>Implementations SHOULD monitor and report heritage depth and branching factor for production scopes. Unusually deep or wide graphs may indicate emitting-system design issues, excessive delegation, or insufficient scope partitioning.</t>
+<t>Caching of previously validated subtrees is permitted and RECOMMENDED for deployments that perform repeated validation of overlapping heritage. Cached validation results MUST be invalidated if the validator's trust in any issuer key changes, for example because of key compromise, key replacement, or revocation-related policy change.</t>
+</section>
+<section anchor="sec-node-granularity-guidance" numbered="true">
+  <name>Node Granularity Guidance</name>
+<t>ATP Core does not normatively prescribe what events MUST or MUST NOT produce ATP nodes -- that is profile responsibility (<xref target="sec-minimum-profile-contract"/>). However, deployments and profile authors benefit from a shared default. The governing principle is: <strong>an ATP node represents an action that warrants independent audit</strong>, not every internal computation step.</t>
+<t>The following non-normative heuristics describe the typical default:</t>
+<t><strong>Node-worthy events</strong> (typically emitted as ATP nodes):</t>
+<ul>
+  <li>External tool invocations and their completions (cross-process, cross-service, or cross-organization calls).</li>
+  <li>Cross-agent dispatches (one agent handing work to another).</li>
+  <li>Cross-issuer payload forwarding events (relay nodes).</li>
+  <li>Decisions that materially affect downstream outcomes (tool selection, routing decisions, synthesis from multiple inputs).</li>
+  <li>Workflow or transaction boundaries (root nodes for new transactions; completion nodes for terminating transactions).</li>
+</ul>
+<t><strong>Not node-worthy events</strong> (typically NOT emitted as ATP nodes):</t>
+<ul>
+  <li>Internal control flow within a single agent's reasoning (<tt>if</tt>/<tt>else</tt> branches, loops, exception handlers).</li>
+  <li>Lookups of environment variables, configuration values, or static reference data.</li>
+  <li>Per-token model output during generation (token-streaming chunks).</li>
+  <li>Pre-emission canonicalization, signing, or storage operations of the ATP layer itself.</li>
+  <li>Health-check pings, heartbeats, or other liveness traffic.</li>
+</ul>
+<t>The boundary between node-worthy and not-node-worthy is <strong>whether the event crosses a trust boundary or affects auditability</strong>. An internal <tt>if</tt> statement in an agent's code is not node-worthy; a decision that selects between two external tools, paid services, or downstream agents is. A configuration lookup is not node-worthy; a configuration <em>change</em> that could alter the agent's behavior is reflected in <tt>agent.version</tt> (<xref target="sec-agent-versioning-guidance"/>), not in a separate emission.</t>
+<t>Profiles MAY normatively constrain these defaults. For example, a high-assurance profile MAY require explicit decisional nodes for any output that affects regulatory reporting; a low-assurance profile MAY suppress decisional nodes entirely and emit only request/completion pairs. Profiles SHOULD justify their granularity rules with reference to the audit posture they target.</t>
+</section>
+<section anchor="sec-chain-exchange-patterns" numbered="true">
+  <name>Chain Exchange Patterns</name>
+<t>ATP does not define a transport protocol for chain exchange. However, deployments that share chains across organizational or system boundaries benefit from common patterns.</t>
+<t>Three patterns are common:</t>
+<t><strong>Pattern X -- Bundle export.</strong> The producer assembles a JSON envelope containing an array of signed nodes plus a list of <tt>withheldNodeIds</tt> (where applicable) and provides it to the consumer as a single artifact. A typical bundle structure:</t>
+<sourcecode type="json"><![CDATA[
+{
+  "atpVersion": "1",
+  "nodes": [],
+  "withheldNodeIds": [],
+  "scopes": []
+}
+]]></sourcecode>
+<t>The consumer iterates <tt>nodes</tt>, validates each per the appropriate validation mode (<xref target="sec-validation-modes"/>), and treats any parent reference that resolves only to a <tt>withheldNodeIds</tt> entry as withheld rather than unresolved.</t>
+<t><strong>Pattern Y -- Pull by nodeId.</strong> The producer exposes a content-addressed retrieval API (<tt>GET /atp/nodes/{nodeId}</tt>) returning the signed node by its identifier. The consumer walks parent references, resolving each via the API. This pattern is appropriate when the consumer's traversal pattern is unpredictable or when chains are very large.</t>
+<t><strong>Pattern Z -- Push to log.</strong> Each issuer emits signed nodes to a shared append-only log (a transparency service per <xref target="sec-c-6-transparency-and-supply-chain-provenance"/>, an event bus, or a centralized audit store). Consumers subscribe or query the log. This pattern is appropriate when multiple consumers need access to the same chains or when anti-suppression guarantees (<xref target="sec-suppression-and-anti-suppression"/>) are required.</t>
+<t>Bundle exports SHOULD include enough context for the consumer to perform the validation mode they require: a bundle intended for full-recursive validation MUST include all heritage; a bundle intended for tip validation MAY include only the tip nodes. ATP Core does not define a normative bundle schema; profiles MAY do so.</t>
+</section>
+</section>
+<section anchor="sec-core-action-types" numbered="true">
+  <name>Core Action Types</name>
+<t>This document defines the following Core action type strings. The <tt>atp:</tt> prefix is reserved for these Core types. Extension action types MUST NOT use the <tt>atp:</tt> prefix; they MUST be absolute <tt>https</tt> URIs under a domain the definer controls (see <xref target="sec-profile-identifiers"/>).</t>
+<t>Each Core action type has:</t>
+<ul>
+  <li><strong>Type Value:</strong> The action type string.</li>
+  <li><strong>Description:</strong> A short description of the action type's semantics.</li>
+  <li><strong>Reference:</strong> Where this document defines the type.</li>
+  <li><strong>Status:</strong> One of <tt>active</tt>, <tt>deprecated</tt>, or <tt>obsolete</tt>.</li>
+</ul>
+<t>The Core action types defined by this document, all with Status <tt>active</tt>, are:</t>
+<table>
+  <thead>
+    <tr>
+      <th>Type Value</th>
+      <th>Description</th>
+      <th>Reference</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><tt>atp:request</tt></td>
+      <td>Represents the initiation of an action, recording intent and input material. <tt>outputHash</tt> is typically absent.</td>
+      <td>This document, <xref target="sec-requestcompletion-pairing"/></td>
+      <td>active</td>
+    </tr>
+    <tr>
+      <td><tt>atp:completion</tt></td>
+      <td>Represents the successful completion of an action initiated by a corresponding request node. <tt>outputHash</tt> covers the result payload.</td>
+      <td>This document, <xref target="sec-requestcompletion-pairing"/></td>
+      <td>active</td>
+    </tr>
+    <tr>
+      <td><tt>atp:failure</tt></td>
+      <td>Represents the failure outcome of an action initiated by a corresponding request node. <tt>outputHash</tt> SHOULD cover any error payload.</td>
+      <td>This document, <xref target="sec-requestcompletion-pairing"/></td>
+      <td>active</td>
+    </tr>
+    <tr>
+      <td><tt>atp:relay</tt></td>
+      <td>Represents a boundary-crossing relay event in which the emitting issuer asserts that input was forwarded without modification. <tt>inputHash</tt> SHOULD equal <tt>outputHash</tt>.</td>
+      <td>This document, <xref target="sec-relay-node-trust-semantics"/></td>
+      <td>active</td>
+    </tr>
+    <tr>
+      <td><tt>atp:decision</tt></td>
+      <td>Represents a decisional node recording a selection, policy decision, or synthesis without direct invocation of an external system.</td>
+      <td>This document, <xref target="sec-node-schema"/> (decisional node definition) and <xref target="sec-worked-example-mcp-tool-discovery-and-invocation"/> (worked example)</td>
+      <td>active</td>
+    </tr>
+  </tbody>
+</table>
+<t>The Core <tt>atp:</tt> action types are defined in this document. Any change to the Status of a Core action type requires a revision of this document. Extension action types MUST be absolute https URIs under a domain the definer controls (see <xref target="sec-profile-identifiers"/>) and MUST NOT use the <tt>atp:</tt> prefix.</t>
+<t>The five initial action types are defined in this document because they represent cross-system patterns whose vocabulary alignment is more valuable than minimalism. Implementations MAY use only a subset. In particular, profiles or deployments that have no need for explicit relay or decisional emission MAY model those concepts using <tt>atp:request</tt> + <tt>atp:completion</tt> pairs and never emit <tt>atp:relay</tt> or <tt>atp:decision</tt> nodes. Conversely, deployments that DO emit relay or decisional nodes benefit from shared vocabulary so that cross-system validators can interpret them uniformly. Defining these types in Core does not imply any deployment must use them.</t>
+</section>
+<section anchor="sec-iana-considerations" numbered="true">
+  <name>IANA Considerations</name>
+<t>This document has no IANA actions.</t>
+</section>
+<section anchor="sec-implementation-status" numbered="true">
+  <name>Implementation Status</name>
+<t>This section is to be removed before publication as an RFC, in accordance with <xref target="RFC7942"/>.</t>
+<t>At the time of this draft, ATP is at the design and prototype stage. No production deployments are reported. A zero-dependency Node.js reference implementation accompanying this draft passes all golden vectors published in <xref target="ATP-TEST-VECTORS"/> for canonicalization (<xref target="sec-canonicalization"/>), <tt>nodeId</tt> computation (<xref target="sec-node-identity"/>), Ed25519 signature generation and verification (<xref target="sec-signature-algorithm"/> and <xref target="sec-signature-computation"/>), and tip-validation node-level integrity (<xref target="sec-verification"/> / <xref target="sec-tip-validation"/>).</t>
+<t>A reference implementation intended to demonstrate interoperability SHOULD publish golden test vectors covering, at minimum:</t>
+<ul>
+  <li>canonicalization per RFC 8785 JCS (<xref target="sec-canonicalization"/>), including the inclusion of the <tt>profile</tt> field when present;</li>
+  <li>nodeId computation (<xref target="sec-node-identity"/>);</li>
+  <li>Ed25519 signature generation and verification (<xref target="sec-signature-algorithm"/> and <xref target="sec-signature-computation"/>);</li>
+  <li>each validation mode defined in <xref target="sec-full-recursive-validation"/> through <xref target="sec-redacted-lineage-validation"/>;</li>
+  <li>the validation result format (<xref target="sec-validation-result-format"/>), including representation of all required result categories;</li>
+  <li>profile-field canonicalization behavior under both strict and permissive validator modes (<xref target="sec-canonicalization-of-profile-defined-fields"/>);</li>
+  <li>handling of invalid, unresolved, withheld, out-of-horizon, key-unresolved, and profile-unresolved parents.</li>
+</ul>
+<t>The companion Internet-Draft <xref target="ATP-TEST-VECTORS"/> provides an initial set of golden vectors aligned with the requirements above. Implementations claiming ATP Core conformance per <xref target="sec-atp-core-conformance"/> MUST pass all vectors in <xref target="ATP-TEST-VECTORS"/> for canonicalization, <tt>nodeId</tt> computation, and Ed25519 signature verification.</t>
+<t>Authors and implementers wishing to report implementation status, interoperability results, or production usage are invited to contact the document author identified in the Author's Address section.</t>
+</section>
+<section anchor="sec-profile-framework" numbered="true">
+  <name>Profile Framework</name>
+<t>An ATP <strong>profile</strong> is a normative specification that extends or constrains ATP Core for a specific deployment context, domain, or interoperability scope. Profiles MAY define additional <tt>action.type</tt> values, additional node schema fields, more restrictive validation rules, null-field inclusion rules (per <xref target="sec-canonicalization"/>), relay type declarations (per <xref target="sec-relay-node-trust-semantics"/>), and completion-pairing semantics (per <xref target="sec-requestcompletion-pairing"/>). Full profile governance, including the specification template and composite conformance labels, is defined by individual profile specifications and by a future ATP Profiles companion document (not yet published as an Internet-Draft). This document defines the ATP Profile Framework: the rules that any profile MUST satisfy in order to be ATP-conformant.</t>
+<section anchor="sec-profile-identifiers" numbered="true">
+  <name>Profile Identifiers</name>
+<t>A profile is identified by a string value carried in an OPTIONAL
+<tt>profile</tt> field on ATP nodes (see
+<xref target="sec-node-schema"/>). When a <tt>profile</tt> field is
+present, validators MUST apply the validation rules of the identified
+profile in addition to ATP Core rules. When the <tt>profile</tt>
+field is absent, ATP Core rules apply exclusively.</t>
+<t>Profile identifiers and extension action types MUST be absolute
+<tt>https</tt> URIs under a DNS domain the definer controls.
+Relative URIs, <tt>urn:</tt> URIs, and <tt>tag:</tt> URIs are not
+used for profile identifiers in this document.</t>
+<figure>
+  <name>Profile Identifier Pattern</name>
+  <artwork type="ascii-art"><![CDATA[
+<base>/atp/profile/{name}/{version}
+
+where <base> is
+  https://davidbates73.github.io/agent-transaction-protocol
+]]></artwork>
+</figure>
+<t>Example (illustrative only):
+<tt>https://davidbates73.github.io/agent-transaction-protocol/atp/profile/mcp/1.0.0</tt></t>
+<t>The <tt>{version}</tt> component MUST use MAJOR.MINOR.PATCH
+semantic versioning as specified in
+<xref target="sec-profile-versioning"/>.</t>
+<t>Validators SHOULD treat an unrecognized profile identifier as
+<tt>profileUnresolved</tt> in the validation result
+(<xref target="sec-validation-result-format"/>).</t>
+</section>
+<section anchor="sec-profile-versioning" numbered="true">
+  <name>Profile Versioning</name>
+<t>Profiles MUST use semantic versioning (MAJOR.MINOR.PATCH):</t>
+<ul>
+  <li>A <strong>MAJOR</strong> version increment is REQUIRED when the profile introduces breaking changes to canonicalization rules, the node schema, or validation logic. Nodes produced under MAJOR version N are not required to be validatable under MAJOR version N+1 without explicit backward-compatibility provisions.</li>
+  <li>A <strong>MINOR</strong> version increment MAY be used for non-breaking additions, such as new action types or new optional fields.</li>
+  <li>A <strong>PATCH</strong> version increment is used for errata, clarifications, and non-normative changes only.</li>
+</ul>
+</section>
+<section anchor="sec-minimum-profile-contract" numbered="true">
+  <name>Minimum Profile Contract</name>
+<t>A conformant ATP profile specification MUST define:</t>
+<ol>
+  <li>The profile identifier, in the format specified in <xref target="sec-profile-identifiers"/>.</li>
+  <li>The action type vocabulary in use, including any relay action types (per <xref target="sec-relay-node-trust-semantics"/>) and their semantics. Profile-defined extension action types MUST be absolute https URIs under a domain the definer controls (see <xref target="sec-profile-identifiers"/>); they MUST NOT use the <tt>atp:</tt> prefix.</li>
+  <li>Any null-field inclusion rules that differ from ATP Core (<xref target="sec-canonicalization"/>), enumerated explicitly by field name.</li>
+  <li>Any completion-pairing semantics that differ from ATP Core (<xref target="sec-requestcompletion-pairing"/>), including whether completion nodes may carry a different <tt>inputHash</tt> than their paired request node.</li>
+  <li>The minimum conformance level required of validators claiming compliance with the profile.</li>
+  <li>Any additional schema fields introduced by the profile, with their normative status (REQUIRED, OPTIONAL, or MUST NOT be present).</li>
+  <li>Node-worthiness rules identifying which events MUST, SHOULD, MAY, or MUST NOT produce ATP nodes within the profile's scope. The profile SHOULD provide examples for at least the most common emission patterns.</li>
+  <li>Streaming semantics, if the profile supports streaming outputs. Such profiles MUST define whether stream chunks, stream completion events, or stream digests are represented as ATP nodes, and how the resulting nodes relate to one another via <tt>parents</tt>.</li>
+  <li>Relay-fidelity evaluation rules for any profile-defined relay-like action type, per <xref target="sec-relay-node-trust-semantics"/>.</li>
+</ol>
+<t>A conformant ATP profile specification SHOULD also identify any fields it introduces that are likely to contain personal data, confidential operational data, security-sensitive policy data, or provider-specific identifiers, and SHOULD provide guidance on minimization, pseudonymization, or external-payload referencing for those fields (<xref target="sec-privacy-considerations"/>).</t>
+<t>A profile MUST NOT weaken ATP Core's cryptographic integrity requirements (<xref target="sec-signing-and-verification"/>) or its acyclicity constraint (<xref target="sec-data-model"/>).</t>
+</section>
+<section anchor="sec-canonicalization-of-profile-defined-fields" numbered="true">
+  <name>Canonicalization of Profile-Defined Fields</name>
+<t>Profiles MAY define additional top-level fields and additional fields within the <tt>action</tt> object. Unless explicitly excluded by the profile specification, all profile-defined fields MUST participate in canonicalization (<xref target="sec-canonicalization"/>) and nodeId computation (<xref target="sec-node-identity"/>).</t>
+<t>Profiles SHOULD NOT exclude fields from canonicalization. Exclusion is reserved for transport-local annotations that are never used for validation, authorization, policy decisions, relay fidelity, or audit claims. A profile that excludes one or more of its own fields from canonicalization MUST enumerate those fields explicitly and MUST justify the exclusion. Fields excluded from canonicalization are not covered by the node signature and therefore MUST NOT be relied upon for tamper-evidence.</t>
+<t>Validators that encounter a node with a <tt>profile</tt> value they do not recognize MUST report the node according to one of the following behaviors, declared by the validator's mode of operation:</t>
+<ul>
+  <li><strong>Strict:</strong> The node is reported as <tt>invalid</tt> because the validator cannot evaluate profile-defined fields' contribution to canonicalization. The node is also recorded under <tt>profileUnresolved</tt> in the validation result (<xref target="sec-validation-result-format"/>).</li>
+  <li><strong>Permissive:</strong> The node is canonicalized including all present fields per <xref target="sec-canonicalization"/>. ATP Core validation proceeds. The validator MUST report the unrecognized profile identifier under <tt>profileUnresolved</tt> in the validation result so that operators can detect interoperability gaps.</li>
+</ul>
+<t>The default behavior is implementation-specific; profile specifications MAY require strict behavior of conformant validators. In either mode, profile-unresolved nodes MUST appear in the <tt>profileUnresolved</tt> array of the validation result and MUST NOT be silently suppressed.</t>
+</section>
+<section anchor="sec-conformance-levels" numbered="true">
+  <name>Conformance Levels</name>
+<t>ATP Core does not define conformance levels beyond the validation mode minimums in <xref target="sec-minimum-support-and-validation-results"/> and the ATP Core conformance definition in <xref target="sec-atp-core-conformance"/>. Profile specifications MAY define additional conformance levels appropriate to their domain -- for example, a hypothetical ATP-MCP profile might define ATP-MCP-L1 / L2 / L3, or an ATP-Healthcare profile might define ATP-Healthcare-Basic / Audit / Regulator. ATP-MCP is one possible profile and is not specially privileged by Core. Conformance level definitions and any composite labels are out of scope for ATP Core and are addressed by individual profile specifications and a future ATP Profiles companion document (not yet published as an Internet-Draft).</t>
+<t>Profile specifications that define composite conformance labels SHOULD also specify the test artifacts (golden vectors, validator behavior expectations, conformance test suites) required to substantiate a conformance claim at each level.</t>
+</section>
+<section anchor="sec-worked-profile-reference" numbered="true">
+  <name>Worked Profile Reference</name>
+<t><xref target="sec-worked-example-mcp-tool-discovery-and-invocation"/> demonstrates a profile-style action-type vocabulary applied to an MCP-style interaction. The action types and <tt>action.subtype</tt> values used in <xref target="sec-worked-example-mcp-tool-discovery-and-invocation"/> are illustrative; a future ATP-MCP profile is expected to define an interoperable vocabulary using https extension action types and/or profile-defined subtype values, and MUST NOT mint new <tt>atp:</tt>-prefixed types outside this Core document.</t>
+</section>
+<section anchor="sec-profile-assessment-states" numbered="true">
+  <name>Profile Assessment States</name>
+<t>ATP Core distinguishes protocol validation from profile assessment. A node MAY be ATP-valid while the enclosing scope remains profile-incomplete.</t>
+<t>Profiles MAY define assessment states including:</t>
+<ul>
+  <li><strong>node-conformant:</strong> A node satisfies ATP Core and applicable profile node rules.</li>
+  <li><strong>scope-open / profile-progressing:</strong> The scope contains no known profile violations but remains open or incomplete.</li>
+  <li><strong>scope-sealed / profile-conformant:</strong> The scope is closed according to profile rules and satisfies all required profile emissions.</li>
+  <li><strong>scope-sealed / profile-nonconformant:</strong> The scope is closed but one or more required profile emissions, parent relationships, or completion pairs are missing or invalid.</li>
+</ul>
+<t>ATP Core does not require a scope-sealing mechanism. Profiles that require sealed-scope assessment MUST define how a scope is sealed and how assessment results are represented. Such profiles MAY define dedicated terminal action types (for example, scope-assessment or scope-sealed event nodes); ATP Core does not register such types.</t>
+<t>Profile assessment results are distinct from ATP Core validation results (<xref target="sec-validation-result-format"/>). Profile specifications that define assessment states SHOULD define a corresponding result format and SHOULD ensure that assessment results compose cleanly with ATP Core validation results without overloading the categories defined in <xref target="sec-validation-result-format"/>.</t>
+</section>
+</section>
+  </middle>
+  <back>
+    <references>
+      <name>References</name>
+    <references>
+      <name>Normative References</name>
+<reference anchor="RFC2119" target="https://www.rfc-editor.org/info/rfc2119">
+      <front>
+        <title>Key words for use in RFCs to Indicate Requirement Levels</title>
+        <author><organization>S. Bradner</organization></author>
+        <date month="March" year="1997"/>
+      </front>
+      <seriesInfo name="RFC" value="2119"/>
+    </reference>
+<reference anchor="RFC8174" target="https://www.rfc-editor.org/info/rfc8174">
+      <front>
+        <title>Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words</title>
+        <author><organization>B. Leiba</organization></author>
+        <date month="May" year="2017"/>
+      </front>
+      <seriesInfo name="RFC" value="8174"/>
+    </reference>
+<reference anchor="RFC8785" target="https://www.rfc-editor.org/info/rfc8785">
+      <front>
+        <title>JSON Canonicalization Scheme (JCS)</title>
+        <author><organization>A. Rundgren, B. Jordan, S. Erdtman</organization></author>
+        <date month="June" year="2020"/>
+      </front>
+      <seriesInfo name="RFC" value="8785"/>
+    </reference>
+<reference anchor="RFC3339" target="https://www.rfc-editor.org/info/rfc3339">
+      <front>
+        <title>Date and Time on the Internet: Timestamps</title>
+        <author initials="G." surname="Klyne" fullname="G. Klyne"/>
+        <author initials="C." surname="Newman" fullname="C. Newman"/>
+        <date month="July" year="2002"/>
+      </front>
+      <seriesInfo name="RFC" value="3339"/>
+    </reference>
+<reference anchor="RFC4648" target="https://www.rfc-editor.org/info/rfc4648">
+      <front>
+        <title>The Base16, Base32, and Base64 Data Encodings</title>
+        <author initials="S." surname="Josefsson" fullname="S. Josefsson"/>
+        <date month="October" year="2006"/>
+      </front>
+      <seriesInfo name="RFC" value="4648"/>
+    </reference>
+<reference anchor="RFC5234" target="https://www.rfc-editor.org/info/rfc5234">
+      <front>
+        <title>Augmented BNF for Syntax Specifications: ABNF</title>
+        <author initials="D." surname="Crocker" fullname="D. Crocker" role="editor"/>
+        <author initials="P." surname="Overell" fullname="P. Overell"/>
+        <date month="January" year="2008"/>
+      </front>
+      <seriesInfo name="RFC" value="5234"/>
+      <seriesInfo name="STD" value="68"/>
+    </reference>
+<reference anchor="RFC6234" target="https://www.rfc-editor.org/info/rfc6234">
+      <front>
+        <title>US Secure Hash Algorithms (SHA and SHA-based HMAC and HKDF)</title>
+        <author initials="D." surname="Eastlake 3rd" fullname="D. Eastlake 3rd"/>
+        <author initials="T." surname="Hansen" fullname="T. Hansen"/>
+        <date month="May" year="2011"/>
+      </front>
+      <seriesInfo name="RFC" value="6234"/>
+    </reference>
+<reference anchor="RFC7493" target="https://www.rfc-editor.org/info/rfc7493">
+      <front>
+        <title>The I-JSON Message Format</title>
+        <author initials="T." surname="Bray" fullname="T. Bray" role="editor"/>
+        <date month="March" year="2015"/>
+      </front>
+      <seriesInfo name="RFC" value="7493"/>
+    </reference>
+<reference anchor="RFC8032" target="https://www.rfc-editor.org/info/rfc8032">
+      <front>
+        <title>Edwards-Curve Digital Signature Algorithm (EdDSA)</title>
+        <author><organization>S. Josefsson, I. Liusvaara</organization></author>
+        <date month="January" year="2017"/>
+      </front>
+      <seriesInfo name="RFC" value="8032"/>
+    </reference>
+    </references>
+    <references>
+      <name>Informative References</name>
+<reference anchor="ATP-TEST-VECTORS" target="https://datatracker.ietf.org/doc/draft-bates-atp-test-vectors/">
+      <front>
+        <title>ATP Core Test Vectors</title>
+        <author><organization>D. Bates</organization></author>
+        <date year="2026"/>
+      </front>
+      <seriesInfo name="Internet-Draft" value="draft-bates-atp-test-vectors-01"/>
+    </reference>
+<reference anchor="RFC9943" target="https://www.rfc-editor.org/info/rfc9943">
+      <front>
+        <title>An Architecture for Trustworthy and Transparent Digital Supply Chains</title>
+        <author initials="H." surname="Birkholz" fullname="H. Birkholz"/>
+        <author initials="A." surname="Delignat-Lavaud" fullname="A. Delignat-Lavaud"/>
+        <author initials="C." surname="Fournet" fullname="C. Fournet"/>
+        <author initials="Y." surname="Deshpande" fullname="Y. Deshpande"/>
+        <author initials="S." surname="Lasker" fullname="S. Lasker"/>
+        <date month="June" year="2026"/>
+      </front>
+      <seriesInfo name="RFC" value="9943"/>
+    </reference>
+<reference anchor="W3C-VC-DM" target="https://www.w3.org/TR/vc-data-model-2.0/">
+      <front>
+        <title>Verifiable Credentials Data Model v2.0</title>
+        <author>
+          <organization>W3C</organization>
+        </author>
+        <date day="15" month="May" year="2025"/>
+      </front>
+      <seriesInfo name="W3C Recommendation" value="vc-data-model-2.0"/>
+    </reference>
+<reference anchor="W3C-DID" target="https://www.w3.org/TR/did-core/">
+      <front>
+        <title>Decentralized Identifiers (DIDs) v1.0</title>
+        <author>
+          <organization>W3C</organization>
+        </author>
+        <date day="19" month="July" year="2022"/>
+      </front>
+      <seriesInfo name="W3C Recommendation" value="did-core"/>
+    </reference>
+<reference anchor="RFC8693" target="https://www.rfc-editor.org/info/rfc8693">
+      <front>
+        <title>OAuth 2.0 Token Exchange</title>
+        <author><organization>M. Jones et al.</organization></author>
+        <date month="January" year="2020"/>
+      </front>
+      <seriesInfo name="RFC" value="8693"/>
+    </reference>
+<reference anchor="RFC7591" target="https://www.rfc-editor.org/info/rfc7591">
+      <front>
+        <title>OAuth 2.0 Dynamic Client Registration Protocol</title>
+        <author><organization>J. Richer et al.</organization></author>
+        <date month="July" year="2015"/>
+      </front>
+      <seriesInfo name="RFC" value="7591"/>
+    </reference>
+<reference anchor="RFC7942" target="https://www.rfc-editor.org/info/rfc7942">
+      <front>
+        <title>Improving Awareness of Running Code: The Implementation Status Section</title>
+        <author><organization>Y. Sheffer, A. Farrel</organization></author>
+        <date month="July" year="2016"/>
+      </front>
+      <seriesInfo name="RFC" value="7942"/>
+    </reference>
+<reference anchor="RFC8615" target="https://www.rfc-editor.org/info/rfc8615">
+      <front>
+        <title>Well-Known Uniform Resource Identifiers (URIs)</title>
+        <author><organization>M. Nottingham</organization></author>
+        <date month="March" year="2019"/>
+      </front>
+      <seriesInfo name="RFC" value="8615"/>
+    </reference>
+<reference anchor="NI" target="https://datatracker.ietf.org/doc/draft-ni-a2a-ai-agent-security-requirements/">
+      <front>
+        <title>AI Agent Security Requirements</title>
+        <author><organization>Y. Ni et al.</organization></author>
+        <date year="2026"/>
+      </front>
+      <seriesInfo name="Internet-Draft" value="draft-ni-a2a-ai-agent-security-requirements-02"/>
+    </reference>
+<reference anchor="KASSELMAN" target="https://datatracker.ietf.org/doc/draft-ietf-wimse-aims/">
+      <front>
+        <title>AI Identity Management System</title>
+        <author><organization>P. Kasselman et al.</organization></author>
+        <date year="2026"/>
+      </front>
+      <seriesInfo name="Internet-Draft" value="draft-ietf-wimse-aims-00"/>
+    </reference>
+<reference anchor="ROSENBERG" target="https://datatracker.ietf.org/doc/draft-rosenberg-agentproto-usecases/">
+      <front>
+        <title>AI Agent Protocols Framework</title>
+        <author><organization>J. Rosenberg, C. Jennings</organization></author>
+        <date year="2025"/>
+      </front>
+      <seriesInfo name="Internet-Draft" value="draft-rosenberg-agentproto-usecases-00"/>
+    </reference>
+<reference anchor="SMITH" target="https://datatracker.ietf.org/doc/draft-smith-opsawg-ai-network-governance/">
+      <front>
+        <title>AI Network Governance Framework</title>
+        <author><organization>A. Smith, N. Pai</organization></author>
+        <date year="2026"/>
+      </front>
+      <seriesInfo name="Internet-Draft" value="draft-smith-opsawg-ai-network-governance-01"/>
+    </reference>
+<reference anchor="NIST-AASI" target="https://www.nist.gov/caisi/ai-agent-standards-initiative">
+      <front>
+        <title>AI Agent Standards Initiative</title>
+        <author><organization>National Institute of Standards and Technology</organization></author>
+        <date year="2026"/>
+      </front>
+    </reference>
+<reference anchor="MCP" target="https://modelcontextprotocol.io/">
+      <front>
+        <title>Model Context Protocol Specification</title>
+        <author><organization>Anthropic and contributors</organization></author>
+        <date year="2025"/>
+      </front>
+    </reference>
+    </references>
+    </references>
+
+<section anchor="sec-worked-example-mcp-tool-discovery-and-invocation" numbered="false">
+<!-- Appendix A values from alpha/draft-01-code @ 8b5b411 examples/appendix-a/bundle.json -->
+  <name>Worked Example: MCP Tool Discovery and Invocation</name>
+<t>This appendix pressure-tests whether the <xref target="sec-node-schema"/> node schema carries the weight of a realistic multi-party agent/tool interaction. It illustrates multi-issuer chain-of-custody, fan-in, the issuer/agent/actor split, relay node semantics, and the request/completion pairing pattern.</t>
+<t>The action types and <tt>action.subtype</tt> values used in this appendix are illustrative only. They are non-normative and MUST NOT be treated as registered ATP-MCP profile values. A future ATP-MCP profile is expected to formally register an interoperable vocabulary.</t>
+<section anchor="sec-a-1-scenario" numbered="false">
+  <name>Scenario</name>
+<t>A human (Bob) is logged into an orchestrator platform. The platform hosts an orchestrator agent that needs to complete a task requiring an external tool. The platform is connected to an MCP (Model Context Protocol <xref target="MCP"/>) broker, which fronts one or more tool services. The orchestrator discovers tools via the broker, selects one, invokes it, and synthesizes the result.</t>
+<t>Three distinct issuers sign nodes in this chain:</t>
+<ul>
+  <li><tt>issuer:platform.example</tt> -- the orchestrator runtime (signs orchestrator-side nodes).</li>
+  <li><tt>issuer:mcp-broker.example</tt> -- the MCP broker (signs broker-side nodes).</li>
+  <li><tt>issuer:tool-crm.example</tt> -- the downstream tool service (signs execution nodes).</li>
+</ul>
+<t>Each issuer holds its own Ed25519 key pair. No issuer signs another issuer's nodes. The DAG is assembled from cross-issuer parent references.</t>
+<t>All nodes share a single scope: <tt>"wf-8f3a1b"</tt> representing one workflow execution. Cross-scope references are not used in this example but are PERMITTED per <xref target="sec-scope-model"/>.</t>
+<t>The human actor is represented by the pseudonymous identifier <tt>psn:9c3a7e4f-bob</tt> (resolvable through a separate identity-resolution service per <xref target="sec-pseudonymous-identifiers-and-post-deletion-verification"/>). The actor field persists across orchestrator-side nodes. The pseudonymous form is used in this example to align with the privacy guidance in <xref target="sec-pseudonymous-identifiers-and-post-deletion-verification"/> and <xref target="sec-deletion-and-redaction-operations"/>; production deployments SHOULD follow the same pattern rather than embedding directly identifying values such as email addresses or employee numbers in <tt>actorId</tt>.</t>
+<t>Each example node uses a defined ATP Core value in <tt>action.type</tt> and a profile-defined descriptive value in <tt>action.subtype</tt>. The <tt>subtype</tt> field is shown to illustrate how a future ATP-MCP profile could add domain-specific naming on top of the Core action types defined in <xref target="sec-core-action-types"/>.</t>
+</section>
+<section anchor="sec-a-2-node-sequence" numbered="false">
+  <name>Node Sequence</name>
+<t>The following seven nodes form the chain. Each is shown as a fully signed node regenerated from <tt>examples/appendix-a/bundle.json</tt> at commit 8b5b411 (branch <tt>alpha/draft-01-code</tt>), with whole-second timestamps. Values are byte-exact with that source; long lines may be folded per RFC 8792 and MUST be unfolded before comparison.</t>
+<section anchor="sec-node-1-tool-catalog-query-atprequest" numbered="false">
+  <name>Node 1 -- tool catalog query (atp:request)</name>
+<t>Orchestrator asks the broker what tools are available.</t>
+<sourcecode type="json"><![CDATA[
+{
+  "nodeId": "579a990bf8da950b027c16e1c4a2ebdcb37376719f19052e9a2\
+f833e7f829e5a",
+  "scope": "wf-8f3a1b",
+  "issuer": {
+    "issuerId": "platform.example",
+    "keyId": "platform-2026-04"
+  },
+  "timestamp": "2026-04-23T12:58:00Z",
+  "agent": {
+    "agentId": "orchestrator-agent",
+    "version": "1.3.0"
+  },
+  "actor": {
+    "actorId": "psn:9c3a7e4f-bob",
+    "authContext": "saml:corp-idp"
+  },
+  "action": {
+    "type": "atp:request",
+    "subtype": "tool_catalog_query",
+    "inputHash": "sha256:22d01b62b67fd95aa602f4ba4ba52689b4705ac\
+348832e6a9e76b71e576638fb"
+  },
+  "parents": [],
+  "signature": "OzGGSI5DNV55SqENO281fdc6hKNCI6qmTIXWd3lLtkZojsME\
+7gj5Atfc0cIpINJTKaqyr195LcT/y84x+c3MBQ=="
+}
+]]></sourcecode>
+<t>Root node. <tt>parents: []</tt>. <tt>inputHash</tt> covers the broker endpoint and query parameters. <tt>outputHash</tt> is omitted because the response has not arrived yet -- this is a request node per the <xref target="sec-requestcompletion-pairing"/> request/completion pairing pattern. The <tt>subtype</tt> field shown here is profile-defined and would be specified by an ATP-MCP profile per <xref target="sec-minimum-profile-contract"/>.</t>
+</section>
+<section anchor="sec-node-2-tool-catalog-response-atpcompletion" numbered="false">
+  <name>Node 2 -- tool catalog response (atp:completion)</name>
+<t>Broker returns its tool inventory. <strong>Signed by the broker, not the orchestrator.</strong></t>
+<sourcecode type="json"><![CDATA[
+{
+  "nodeId": "bd3a4b579556fd2697d795c713a12ab6fbe76d4fda1cd053420\
+2cb9bbb8c8367",
+  "scope": "wf-8f3a1b",
+  "issuer": {
+    "issuerId": "mcp-broker.example",
+    "keyId": "broker-2026-04"
+  },
+  "timestamp": "2026-04-23T12:58:01Z",
+  "agent": {
+    "agentId": "mcp-catalog-service",
+    "version": "2.1.0"
+  },
+  "action": {
+    "type": "atp:completion",
+    "subtype": "tool_catalog_response",
+    "inputHash": "sha256:22d01b62b67fd95aa602f4ba4ba52689b4705ac\
+348832e6a9e76b71e576638fb",
+    "outputHash": "sha256:2888ec58f0a28271f6e97f0a3e13b7c264d741\
+55e0abc03f133067bc5867ab97"
+  },
+  "parents": [
+    "579a990bf8da950b027c16e1c4a2ebdcb37376719f19052e9a2f833e7f8\
+29e5a"
+  ],
+  "signature": "a+07A4mueor9tqan+DOtwnkg2slpoE+HnKwjLTXl+FJbh0A8\
+X919Ry8Aeq+NGPL7X/dAVTM6V/O7J03BEkkfDA=="
+}
+]]></sourcecode>
+<t>The broker has no <tt>actor</tt> -- the action is not being taken on behalf of a human principal; it is a service response. The <tt>actor</tt> field is OPTIONAL per <xref target="sec-node-schema"/> and is omitted here. <tt>parents</tt> points back to the orchestrator's query, forming a cross-issuer link. This node serves as the completion node for Node 1's request, carrying the <tt>outputHash</tt> that Node 1 omitted.</t>
+</section>
+<section anchor="sec-node-3-tool-selection-decision-atpdecision" numbered="false">
+  <name>Node 3 -- tool selection decision (atp:decision)</name>
+<t>Orchestrator picks a tool based on the catalog. This is a <strong>decisional node</strong> per <xref target="sec-core-action-types"/>: no external system is called, but a decision is recorded as part of the chain.</t>
+<sourcecode type="json"><![CDATA[
+{
+  "nodeId": "2afad50654fd4223133449a8a8a0b361ce34c315d587d4feada\
+cbe8466fa5507",
+  "scope": "wf-8f3a1b",
+  "issuer": {
+    "issuerId": "platform.example",
+    "keyId": "platform-2026-04"
+  },
+  "timestamp": "2026-04-23T12:58:02Z",
+  "agent": {
+    "agentId": "orchestrator-agent",
+    "version": "1.3.0"
+  },
+  "actor": {
+    "actorId": "psn:9c3a7e4f-bob",
+    "authContext": "saml:corp-idp"
+  },
+  "action": {
+    "type": "atp:decision",
+    "subtype": "tool_selection_decision",
+    "inputHash": "sha256:2888ec58f0a28271f6e97f0a3e13b7c264d7415\
+5e0abc03f133067bc5867ab97",
+    "outputHash": "sha256:3ddd1467682bdda4e2088885ef0b409b755099\
+38e214bfecd8512d9da9c8945a"
+  },
+  "parents": [
+    "bd3a4b579556fd2697d795c713a12ab6fbe76d4fda1cd0534202cb9bbb8\
+c8367"
+  ],
+  "signature": "29sIRFfffKm0g3zX4ZuruLWLQDer1Vn2+Urssyx7o7sv6uaH\
+RUy2Q8AQ9WxWndy7pPZU8UDFSaR/oABUyQBeDw=="
+}
+]]></sourcecode>
+<t><tt>inputHash</tt> references the catalog the orchestrator saw; <tt>outputHash</tt> references the selection rationale (prompt trace, scoring notes, or policy decision). This node is the auditable answer to "why did the agent choose this tool?"</t>
+</section>
+<section anchor="sec-node-4-tool-invocation-request-atprequest" numbered="false">
+  <name>Node 4 -- tool invocation request (atp:request)</name>
+<t>Orchestrator asks the broker to invoke the chosen tool.</t>
+<sourcecode type="json"><![CDATA[
+{
+  "nodeId": "3d67c513c9fce1c969df60be4c757b113c6372ab00305a1b18d\
+14e16f6b8a661",
+  "scope": "wf-8f3a1b",
+  "issuer": {
+    "issuerId": "platform.example",
+    "keyId": "platform-2026-04"
+  },
+  "timestamp": "2026-04-23T12:58:03Z",
+  "agent": {
+    "agentId": "orchestrator-agent",
+    "version": "1.3.0"
+  },
+  "actor": {
+    "actorId": "psn:9c3a7e4f-bob",
+    "authContext": "saml:corp-idp"
+  },
+  "action": {
+    "type": "atp:request",
+    "subtype": "tool_invocation_request",
+    "inputHash": "sha256:a3bf701ff235247fc3aa3e7c5ce8edbccb0b4fd\
+501302f114e1859a1a3e8c08f"
+  },
+  "parents": [
+    "2afad50654fd4223133449a8a8a0b361ce34c315d587d4feadacbe8466f\
+a5507"
+  ],
+  "signature": "6eViCsAyFP+iPI9aiGZ+TRmjn5y5wFkPYfQHLyLL/XrAsoNT\
++EH1XCOyoWmrobinT1X+Q/uTCu5bun2gFOKZCA=="
+}
+]]></sourcecode>
+<t>Request node -- <tt>outputHash</tt> is omitted per <xref target="sec-requestcompletion-pairing"/>. Linear descendant of the selection decision.</t>
+</section>
+<section anchor="sec-node-5-tool-execution-atpcompletion" numbered="false">
+  <name>Node 5 -- tool execution (atp:completion)</name>
+<t>The tool service executes the request and signs its own node. The broker forwards the request but the tool signs directly, with <tt>parents</tt> pointing at the invocation request.</t>
+<sourcecode type="json"><![CDATA[
+{
+  "nodeId": "81671b1fb1a640be1ac6fe590b29d53685a9285231b293ba53f\
+3472cba2c0a82",
+  "scope": "wf-8f3a1b",
+  "issuer": {
+    "issuerId": "tool-crm.example",
+    "keyId": "crm-2026-04"
+  },
+  "timestamp": "2026-04-23T12:58:04Z",
+  "agent": {
+    "agentId": "crm-lookup-service",
+    "version": "5.0.2"
+  },
+  "action": {
+    "type": "atp:completion",
+    "subtype": "tool_execution",
+    "inputHash": "sha256:a3bf701ff235247fc3aa3e7c5ce8edbccb0b4fd\
+501302f114e1859a1a3e8c08f",
+    "outputHash": "sha256:a7c0674dad2b224ce361bc6654c9ac4971ca0a\
+47ed88fe04447eaa1350291cde"
+  },
+  "parents": [
+    "3d67c513c9fce1c969df60be4c757b113c6372ab00305a1b18d14e16f6b\
+8a661"
+  ],
+  "signature": "JCIuI4wjoNwhKeHt5ysR9gvs+wOztr8vfUv6fhnn95TV9bFV\
+SaexLT7Teyp8UBO6hm+a73WjxGMvYu6bXvqtBg=="
+}
+]]></sourcecode>
+<t>Third issuer enters the chain. No <tt>actor</tt> -- this is a service-origin action.</t>
+</section>
+<section anchor="sec-node-6-tool-execution-response-atprelay" numbered="false">
+  <name>Node 6 -- tool execution response (atp:relay)</name>
+<t>Broker relays the execution result back to the orchestrator. This node is <em>optional</em> -- if the orchestrator accepts the tool's signed node directly, the broker's relay does not require its own node. Shown here for completeness and to illustrate relay node semantics.</t>
+<sourcecode type="json"><![CDATA[
+{
+  "nodeId": "9e6aa12a28c45f0aac85f4bbd8ca651cda4ce0875ba284e9dd1\
+f34c47bed4cb2",
+  "scope": "wf-8f3a1b",
+  "issuer": {
+    "issuerId": "mcp-broker.example",
+    "keyId": "broker-2026-04"
+  },
+  "timestamp": "2026-04-23T12:58:05Z",
+  "agent": {
+    "agentId": "mcp-relay-service",
+    "version": "2.1.0"
+  },
+  "action": {
+    "type": "atp:relay",
+    "subtype": "tool_execution_response",
+    "inputHash": "sha256:a7c0674dad2b224ce361bc6654c9ac4971ca0a4\
+7ed88fe04447eaa1350291cde",
+    "outputHash": "sha256:a7c0674dad2b224ce361bc6654c9ac4971ca0a\
+47ed88fe04447eaa1350291cde"
+  },
+  "parents": [
+    "81671b1fb1a640be1ac6fe590b29d53685a9285231b293ba53f3472cba2\
+c0a82"
+  ],
+  "signature": "s7O2llXLndbNA2kM04myQXklNLHGay0HfJLMkz23TWUauU8A\
+Q7fA/5aErUGvSZKc79AdMwKO3CYy9yFrsqmbCg=="
+}
+]]></sourcecode>
+<t><strong>Relay node.</strong> <tt>inputHash == outputHash</tt> because the broker asserts it is not transforming the payload. Per <xref target="sec-relay-node-trust-semantics"/>, this is an issuer assertion of fidelity, not proof of non-modification. Validators requiring strong fidelity guarantees SHOULD verify Node 5's signature directly rather than relying solely on this relay claim (see <xref target="sec-relay-fidelity-validation-states"/> for the verified/asserted/contradicted fidelity states).</t>
+</section>
+<section anchor="sec-node-7-decision-synthesis-atpdecision" numbered="false">
+  <name>Node 7 -- decision synthesis (atp:decision)</name>
+<t>Orchestrator synthesizes a final answer from the tool result. <strong>This is a fan-in node</strong> -- it has two parents: the relay's execution response (Node 6) and the selection decision (Node 3), because the synthesis depends on both the evidence and the prior reasoning.</t>
+<sourcecode type="json"><![CDATA[
+{
+  "nodeId": "7798be80022487aebc0b63f0a4ace006cb57e4c24934272f73a\
+20dcb941b64d2",
+  "scope": "wf-8f3a1b",
+  "issuer": {
+    "issuerId": "platform.example",
+    "keyId": "platform-2026-04"
+  },
+  "timestamp": "2026-04-23T12:58:06Z",
+  "agent": {
+    "agentId": "orchestrator-agent",
+    "version": "1.3.0"
+  },
+  "actor": {
+    "actorId": "psn:9c3a7e4f-bob",
+    "authContext": "saml:corp-idp"
+  },
+  "action": {
+    "type": "atp:decision",
+    "subtype": "decision_synthesis",
+    "inputHash": "sha256:d0e082d6f4487967ef8d477508b96300fd420f9\
+136ee63531a32ade856574a46",
+    "outputHash": "sha256:8622adfa3c33b865789ea3800fe12d2f65b67f\
+3e088ac93169873c44960d2137"
+  },
+  "parents": [
+    "9e6aa12a28c45f0aac85f4bbd8ca651cda4ce0875ba284e9dd1f34c47be\
+d4cb2",
+    "2afad50654fd4223133449a8a8a0b361ce34c315d587d4feadacbe8466f\
+a5507"
+  ],
+  "signature": "XYBqD9exCG9wHJeYh52nuP2Ncqy8APUAiqyLxthUqmOOJVGw\
+RmkKaqt8RQdxSOmksvTOoaXjjmy24vdWdQjACg=="
+}
+]]></sourcecode>
+<t>Fan-in illustrates why the DAG model is necessary: a linear log could not express that the synthesis is causally dependent on both the selection rationale <em>and</em> the tool result.</t>
+</section>
+</section>
+<section anchor="sec-a-3-dag-structure" numbered="false">
+  <name>DAG Structure</name>
+<t>The following diagram shows the node-and-edge structure of the example, with nodes grouped by issuer:</t>
+<artwork type="ascii-art"><![CDATA[
+  platform.example          mcp-broker.example       tool-crm.example
+  -----------------         ------------------       ----------------
+  N1 atp:request
+       |
+       +------------------> N2 atp:completion
+       |                         |
+  N3 atp:decision <--------------+
+       |
+  N4 atp:request
+       |
+       +------------------> (forward) ------------> N5 atp:completion
+       |                                                   |
+       |                    N6 atp:relay <-----------------+
+       |                         |
+  N7 atp:decision <--------------+
+       ^
+       |
+       +---- also parents: N3 (fan-in)
+]]></artwork>
+<t>The following sequence diagram shows the temporal message flow of the same interaction:</t>
+<artwork type="ascii-art"><![CDATA[
+  Orchestrator          Broker                 Tool
+       |                  |                     |
+       |-- N1 request --->|                     |
+       |<- N2 completion -|                     |
+       |                  |                     |
+       |-- N3 decision (local)                  |
+       |                  |                     |
+       |-- N4 request --->|                     |
+       |                  |-- forward --------->|
+       |                  |<- N5 completion ----|
+       |<- N6 relay ------|                     |
+       |                  |                     |
+       |-- N7 decision (fan-in: N6 + N3)        |
+]]></artwork>
+<t>Seven nodes. Three issuers. One actor (human) across all orchestrator-side nodes; no actor on broker/tool-side nodes. One workflow scope. One fan-in at the synthesis step. One relay node at the broker layer.</t>
+</section>
+<section anchor="sec-a-4-what-this-example-demonstrates" numbered="false">
+  <name>What This Example Demonstrates</name>
+<ul>
+  <li><strong><xref target="sec-node-schema"/> schema carries the weight.</strong> All seven nodes serialize cleanly into the base schema. No new top-level fields were required. The <tt>subtype</tt> field used in <tt>action</tt> is profile-defined and would be specified by an ATP-MCP profile per <xref target="sec-minimum-profile-contract"/>.</li>
+  <li><strong>Three-way identity split does real work.</strong> The orchestrator's nodes (1, 3, 4, 7) share issuer and agent but carry the human actor. The broker and tool nodes carry no actor -- the action is not human-delegated at that layer. This is exactly the distinction the split is designed to capture.</li>
+  <li><strong>Cross-issuer chain of custody works via <tt>parents</tt>.</strong> No issuer signs another issuer's nodes. Chain integrity comes from content-addressed <tt>nodeId</tt> references, which are tamper-evident per <xref target="sec-signing-and-verification"/>. When the tool's signed execution node (Node 5) is present in the chain, the broker is a forwarding layer rather than the authoritative origin of the tool result; profiles MAY override this default by defining alternative authority semantics for relay nodes.</li>
+  <li><strong>Fan-in is necessary, not decorative.</strong> The synthesis node (Node 7) demonstrates why a DAG beats a linear log: causal dependency on both evidence and prior decision.</li>
+  <li><strong>Request/completion pairing works cleanly.</strong> Nodes 1 and 4 use <tt>atp:request</tt> and omit <tt>outputHash</tt> per <xref target="sec-requestcompletion-pairing"/>. Nodes 2 and 5 use <tt>atp:completion</tt> and serve as their respective completion nodes. The pattern handles cross-issuer request/response naturally.</li>
+  <li><strong>Relay semantics are explicit.</strong> Node 6 uses <tt>atp:relay</tt> and asserts relay fidelity (<tt>inputHash == outputHash</tt>). Per <xref target="sec-relay-node-trust-semantics"/>, this is an assertion, not proof. Validators can verify Node 5 directly for stronger fidelity (<xref target="sec-relay-fidelity-validation-states"/>).</li>
+  <li><strong>"Node-worthy" selection is profile responsibility.</strong> Node 6 could legitimately be omitted in this Core example. ATP Core does not prescribe; an ATP-MCP profile is expected to define node-worthiness rules per <xref target="sec-minimum-profile-contract"/>.</li>
+</ul>
+</section>
+<section anchor="sec-a-5-profile-note-action-type-and-action-subtype-vocabulary" numbered="false">
+  <name>Profile Note: action.type and action.subtype Vocabulary</name>
+<t>The ATP Core action types used in this example (<tt>atp:request</tt>, <tt>atp:completion</tt>, <tt>atp:relay</tt>, <tt>atp:decision</tt>) are defined in <xref target="sec-core-action-types"/>. The descriptive subtypes (<tt>tool_catalog_query</tt>, <tt>tool_invocation_request</tt>, etc.) are illustrative and are carried in a profile-defined <tt>action.subtype</tt> field. Each example node uses a defined ATP Core value in <tt>action.type</tt> and a profile-defined descriptive value in <tt>action.subtype</tt>.</t>
+<t>The <tt>subtype</tt> values used here are non-normative and MUST NOT be treated as registered ATP-MCP profile values. A future ATP-MCP profile specification is expected to define a canonical vocabulary for MCP-style interactions. The vocabulary MAY be expressed through <tt>action.subtype</tt> values, extension action types that are absolute https URIs under a domain the profile authors control (per <xref target="sec-profile-identifiers"/>), or both -- that design decision is left to the profile authors. Such a profile MUST NOT mint new <tt>atp:</tt>-prefixed action types; only this Core document defines those.</t>
+</section>
+</section>
+<section anchor="sec-future-work-and-areas-for-further-refinement" numbered="false">
+  <name>Future Work and Areas for Further Refinement</name>
+<t>The following areas are candidates for future refinement as implementation experience accumulates:</t>
+<ul>
+  <li>Empirical performance data across storage patterns and graph shapes to validate the guidance in <xref target="sec-performance-budget-guidance"/>.</li>
+  <li>Operational patterns for cross-scope federation mechanisms referenced in <xref target="sec-cross-scope-resolution"/>.</li>
+  <li>Profile specifications for domain-specific interaction patterns, such as an ATP-MCP profile for MCP-style tool discovery and invocation sequences and an ATP-Gateway profile for AI gateway routing, guardrail, cache, and provider-fallback semantics.</li>
+  <li>Formal specification of conformance levels (e.g., composite labels such as ATP-MCP-L1/L2/L3) within profile specifications. ATP Core defers conformance-level definition to profiles per <xref target="sec-conformance-levels"/>.</li>
+  <li>Scope-level assessment or sealing semantics for chains where an explicit "no further nodes will be emitted" signal is required. ATP Core defines the assessment-state vocabulary in <xref target="sec-profile-assessment-states"/> but does not define scope-sealing mechanisms; profiles that require sealed-scope assessment are responsible for those definitions.</li>
+  <li>Streaming-response semantics for profiles that target token-streaming gateways, including whether each token chunk is a node, the final response is a node, or only a digest of the stream is hashed into one completion node. ATP Core requires profiles that support streaming to declare these semantics per <xref target="sec-minimum-profile-contract"/>.</li>
+  <li>A normative key-discovery path (e.g., a well-known URI registration under <xref target="RFC8615"/>). ATP Core explicitly defers this to a future specification (<xref target="sec-key-lifecycle"/>, <xref target="sec-iana-considerations"/>).</li>
+  <li>A media type registration for the <xref target="sec-validation-result-format"/> validation result format, if cross-organization exchange of validation results becomes a recognized use case.</li>
+  <li>Algorithm-agility mechanisms for the hash and signature primitives currently fixed at SHA-256 and Ed25519. ATP Core treats this as a forward-compatibility issue addressed by a future revision rather than negotiated within this version.</li>
+</ul>
+</section>
+<section anchor="sec-related-work" numbered="false">
+  <name>Related Work</name>
+<t>Several active Internet-Drafts and standards initiatives address aspects of AI agent security, identity, and governance. ATP is designed to be complementary to these efforts rather than overlapping. This appendix describes the relationship between ATP and each relevant body of work.</t>
+<section anchor="sec-c-1-identity-and-authentication" numbered="false">
+  <name>Identity and Authentication</name>
+<t><xref target="NI"/> defines security requirements for AI agents across provisioning, registration, discovery, cross-domain interconnection, and access control. It introduces an Agent Credential Authority (ACA) and an Agent Registry Service (ARS) as part of that architecture.</t>
+<t><xref target="KASSELMAN"/> proposes AI Agent Authentication and Authorization using existing standards including WIMSE, SPIFFE, and the OAuth 2.0 family. It defines the Agent Identity Management System (AIMS) as a conceptual model for establishing, maintaining, and evaluating the identity and permissions of agent workloads.</t>
+<t>Both efforts answer the question "is this agent authenticated and authorized to act?" ATP answers a different question: "what did this agent do, and can that action be independently verified?" ATP does not replace credential issuance, registration, workload identity, or authorization frameworks. An ATP deployment MAY consume credentials or identifiers established by systems such as ACA/ARS or AIMS-compatible deployments as the operational basis for <tt>issuer.keyId</tt>, <tt>agent.agentId</tt>, and <tt>actor.authContext</tt> mappings.</t>
+</section>
+<section anchor="sec-c-2-agent-communication-frameworks" numbered="false">
+  <name>Agent Communication Frameworks</name>
+<t><xref target="ROSENBERG"/> describes a framework for AI agent communications, surveys protocols including MCP, A2A, and the Agntcy Framework, and frames requirements for AI agent communications on the Internet.</t>
+<t>ATP is not a communication protocol. ATP does not define how agents discover, connect to, or exchange messages with one another. ATP defines how actions taken during or as a result of those communications are recorded as cryptographically signed, causally linked graph nodes. ATP can therefore serve as an accountability and audit layer for systems built on communication frameworks such as those described in <xref target="ROSENBERG"/>.</t>
+</section>
+<section anchor="sec-c-3-domain-specific-governance" numbered="false">
+  <name>Domain-Specific Governance</name>
+<t><xref target="SMITH"/> defines a governance framework for AI-mediated autonomous network device management. It establishes thirteen governance areas including human authority, bounded autonomy, transparency, reversibility, escalation, and related safety controls for AI-mediated network management systems.</t>
+<t>ATP and <xref target="SMITH"/> operate at different layers. <xref target="SMITH"/> defines governance principles and control expectations. ATP defines governance evidence: a verifiable record of what agents actually did. The two are complementary. Governance principles without verifiable evidence are difficult to prove; verifiable evidence without governance principles is data without policy. ATP can provide the evidentiary substrate used to demonstrate compliance or non-compliance with domain-specific governance frameworks.</t>
+</section>
+<section anchor="sec-c-4-standards-coordination" numbered="false">
+  <name>Standards Coordination</name>
+<t><xref target="NIST-AASI"/> describes the NIST AI Agent Standards Initiative, which aims to foster industry-led technical standards and open protocols so that agents function securely on behalf of users and interoperate smoothly across the digital landscape. ATP's focus on verifiable agent-action lineage falls within that broader accountability and interoperability space.</t>
+</section>
+<section anchor="sec-c-5-existing-rfcs-applied-to-agent-systems" numbered="false">
+  <name>Existing RFCs Applied to Agent Systems</name>
+<t>Several existing RFCs are relevant in agent deployments.</t>
+<t><xref target="RFC8693"/> defines OAuth 2.0 Token Exchange, which can be used for secure delegation and scoped authority grants between systems. <xref target="RFC7591"/> defines OAuth 2.0 Dynamic Client Registration Protocol, which can be applied to automated registration of agent workloads.</t>
+<t>ATP does not depend on or replace these RFCs. Instead, ATP can compose with them. For example, token-exchange contexts may be reflected in <tt>actor.authContext</tt>, while identifiers established through registration flows may be mapped by implementations into <tt>agent.agentId</tt> and <tt>issuer.issuerId</tt>.</t>
+</section>
+<section anchor="sec-c-6-transparency-and-supply-chain-provenance" numbered="false">
+  <name>Transparency and Supply-Chain Provenance</name>
+<t><xref target="RFC9943"/> (Supply Chain Integrity, Transparency and Trust) defines an architecture for issuing, registering, and verifying signed statements about software supply-chain artifacts via append-only transparency services. SCITT and ATP address related but distinct problems.</t>
+<t>SCITT publishes signed statements to an auditable transparency log so that the existence and order of statements can be verified independently of the issuer. ATP defines a directed acyclic graph of signed agent-action nodes whose causal relationships are themselves cryptographically tamper-evident. SCITT is publication-and-witnessing oriented; ATP is causality-and-heritage oriented.</t>
+<t>The two are composable. An ATP deployment that requires independent witnessing of node existence and ordering MAY publish ATP nodes (or their <tt>nodeId</tt> values) as signed statements to a SCITT-compatible transparency service. In that composition, ATP provides the verifiable causal structure of agent actions, and SCITT provides operator-independent evidence that those nodes existed at a given time and have not been retroactively suppressed. This composition is the recommended deployment pattern for the anti-suppression scenario discussed in <xref target="sec-suppression-and-anti-suppression"/>.</t>
+<t>ATP Core does not require a transparency layer. Future profile specifications MAY describe SCITT-compatible publication patterns where stronger anti-suppression guarantees are needed.</t>
+</section>
+
+<section anchor="sec-verifiable-credentials-and-dids" numbered="false">
+  <name>Verifiable Credentials and Decentralized Identifiers</name>
+<t>The W3C Verifiable Credentials Data Model
+<xref target="W3C-VC-DM"/> and Decentralized Identifiers
+<xref target="W3C-DID"/> address how claims about a subject,
+including delegated authority, are issued and verified, and how
+identifiers resolve to keys. ATP addresses neither. An ATP node
+records which agent acted, which issuer signed, and, through actor,
+on whose behalf the action is claimed to have occurred; it does not
+prove that the claimed delegation existed or was valid. Deployments
+may compose the two: <tt>issuer.keyId</tt> or <tt>agent.agentId</tt>
+may be a DID URL that resolves to the signing key, and
+<tt>actor.authContext</tt> may carry a hash of the credential or
+token that conveyed the delegated authority
+(<xref target="sec-credentials-in-authcontext"/>). Validating that
+credential is outside ATP.</t>
+</section>
+<section anchor="sec-c-7-atps-distinct-contribution" numbered="false">
+  <name>ATP's Distinct Contribution</name>
+<t>The gap ATP fills is specific: none of the above efforts define a protocol for cryptographically signed, DAG-structured, causally linked records of agent actions with explicit separation of issuer, agent, and actor identity. Adjacent efforts address who agents are, what agents are allowed to do, how agents communicate, what governance principles they should follow, and how supply-chain statements are made transparent. ATP addresses what agents actually did, provably, with tamper-evident lineage that does not require trusting the platform that produced the record.</t>
+<t>ATP is intentionally narrow so that it can compose with identity, authorization, communication, governance, and transparency layers defined by adjacent efforts without creating conflicts or dependencies that would impair adoption of either ATP or the systems it complements.</t>
+</section>
+</section>
+  </back>
+</rfc>

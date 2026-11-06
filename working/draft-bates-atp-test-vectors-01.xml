@@ -1,0 +1,476 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!DOCTYPE rfc [
+  <!ENTITY nbsp    "&#160;">
+]>
+<rfc xmlns:xi="http://www.w3.org/2001/XInclude"
+     ipr="trust200902"
+     docName="draft-bates-atp-test-vectors-01"
+     submissionType="independent"
+     category="info"
+     tocInclude="true"
+     sortRefs="true"
+     symRefs="true"
+     version="3">
+  <front>
+    <title abbrev="ATP-Test-Vectors">ATP Core Test Vectors</title>
+    <seriesInfo name="Internet-Draft" value="draft-bates-atp-test-vectors-01"/>
+    <author fullname="David A. Bates" initials="D." surname="Bates">
+      <organization>SVT Robotics</organization>
+      <address>
+        <email>david.bates@svtrobotics.com</email>
+        <uri>https://www.svtrobotics.com/</uri>
+      </address>
+    </author>
+    <date day="2" month="November" year="2026"/>
+    <area>Applications</area>
+    <workgroup>Independent Submission</workgroup>
+    <keyword>test vectors</keyword>
+    <keyword>canonicalization</keyword>
+    <keyword>signature</keyword>
+    <keyword>interoperability</keyword>
+    <abstract>
+<t>This document publishes golden test vectors for the Agent
+Transaction Protocol (ATP). The vectors cover canonicalization
+(RFC 8785 JCS), nodeId computation, and Ed25519 signature generation
+and verification. ATP Core conformance requires that conformant
+implementations pass all vectors in this document for
+canonicalization, nodeId computation, and Ed25519 signature
+verification.</t>
+    </abstract>
+  </front>
+  <middle>
+<section anchor="sec-introduction" numbered="true">
+  <name>Introduction</name>
+<t><xref target="ATP-CORE"/> specifies a deterministic identity and signature model for agent-action nodes. Two independent implementations presented with the same node content are required to compute byte-identical canonical forms, byte-identical <tt>nodeId</tt> values, and to verify each other's Ed25519 signatures.</t>
+<t>This document publishes a starter set of test vectors so that interoperability claims can be substantiated mechanically rather than by inspection. Each vector is computed and recorded in this document; an implementation passes a vector if and only if it produces the exact byte sequence and hex value recorded for that vector.</t>
+<t>The vectors in this -01 release cover the minimum required for ATP Core conformance: canonicalization fixtures, <tt>nodeId</tt> computation across representative node shapes, and one Ed25519 sign/verify vector with deterministic key material. Future revisions will add fixtures for validation modes, the validation result format in <xref target="ATP-CORE" section="13.6" sectionFormat="of"/>, profile-field canonicalization (strict and permissive), parent-state handling, and adversarial cases (large numbers, surrogate pairs, deeply nested structures).</t>
+</section>
+<section anchor="sec-conventions" numbered="true">
+  <name>Conventions</name>
+<t>Some lines in this document are too long to fit within the 72-column limit of Internet-Draft text. Those lines are folded using the single backslash strategy of RFC 8792. Backslash characters at the end of a line are not part of the vector; unfold before comparing.</t>
+<t>The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "SHOULD NOT", "RECOMMENDED", "NOT RECOMMENDED", "MAY", and "OPTIONAL" in this document are to be interpreted as described in BCP 14 <xref target="RFC2119"/> <xref target="RFC8174"/> when, and only when, they appear in all capitals, as shown here.</t>
+<t>All canonical byte sequences in this document are presented as UTF-8 text. All hash and signature outputs are presented as lowercase ASCII hexadecimal characters (%x30-39 / %x61-66) unless explicitly stated otherwise. ATP Core defines ABNF lexical productions for <tt>nodeId</tt>, <tt>parents</tt> entries, timestamps, and payload hashes (timestamp format and lexical token rules in <xref target="ATP-CORE"/>); values MUST match those productions exactly, with no surrounding whitespace or newline.</t>
+</section>
+<section anchor="sec-canonicalization-vectors-rfc-8785-jcs" numbered="true">
+  <name>Canonicalization Vectors (RFC 8785 JCS)</name>
+<t>These vectors verify that an implementation's canonicalizer matches RFC 8785 JSON Canonicalization Scheme <xref target="RFC8785"/>. They are intentionally minimal so that any conformant JCS implementation produces identical output.</t>
+<section anchor="sec-vector-c1-empty-object" numbered="true">
+  <name>Vector C1 -- empty object</name>
+<t>Input:</t>
+<sourcecode type="json"><![CDATA[
+{}
+]]></sourcecode>
+<t>Canonical bytes (UTF-8):</t>
+<artwork><![CDATA[
+{}
+]]></artwork>
+<t>Length: 2 bytes.</t>
+</section>
+<section anchor="sec-vector-c2-object-with-key-reordering" numbered="true">
+  <name>Vector C2 -- object with key reordering</name>
+<t>Input:</t>
+<sourcecode type="json"><![CDATA[
+{"b": 1, "a": 2}
+]]></sourcecode>
+<t>Canonical bytes (UTF-8):</t>
+<artwork><![CDATA[
+{"a":2,"b":1}
+]]></artwork>
+<t>Length: 13 bytes.</t>
+</section>
+<section anchor="sec-vector-c3-null-valued-field-omission-per-atp-section-9" numbered="true">
+  <name>Vector C3 -- null-valued field omission per ATP Core Section 9</name>
+<t>Input:</t>
+<sourcecode type="json"><![CDATA[
+{"a": 1, "b": null}
+]]></sourcecode>
+<t>Canonical bytes (UTF-8) per ATP <xref target="ATP-CORE" section="9" sectionFormat="of"/> (null fields omitted):</t>
+<artwork><![CDATA[
+{"a":1}
+]]></artwork>
+<t>Length: 7 bytes.</t>
+<t><strong>Note:</strong> Strict RFC 8785 JCS would preserve <tt>"b":null</tt>. ATP <xref target="ATP-CORE" section="9" sectionFormat="of"/> modifies this rule and requires null-valued fields to be omitted. Profiles MAY override the omission rule per <xref target="ATP-CORE" section="9" sectionFormat="of"/>.</t>
+</section>
+<section anchor="sec-vector-c4-array-order-preservation" numbered="true">
+  <name>Vector C4 -- array order preservation</name>
+<t>Input:</t>
+<sourcecode type="json"><![CDATA[
+{"items": [3, 1, 2]}
+]]></sourcecode>
+<t>Canonical bytes (UTF-8):</t>
+<artwork><![CDATA[
+{"items":[3,1,2]}
+]]></artwork>
+<t>Array order MUST be preserved as declared.</t>
+</section>
+<section anchor="sec-vector-c5-nested-object-key-sorting" numbered="true">
+  <name>Vector C5 -- nested object key sorting</name>
+<t>Input:</t>
+<sourcecode type="json"><![CDATA[
+{"outer": {"z": 1, "a": 2}, "alpha": 3}
+]]></sourcecode>
+<t>Canonical bytes (UTF-8):</t>
+<artwork><![CDATA[
+{"alpha":3,"outer":{"a":2,"z":1}}
+]]></artwork>
+<t>Both top-level and nested keys MUST be sorted.</t>
+</section>
+</section>
+<section anchor="sec-nodeid-computation-vectors" numbered="true">
+  <name>nodeId Computation Vectors</name>
+<t>These vectors verify the full <tt>nodeId</tt> formula:</t>
+<artwork><![CDATA[
+nodeId = SHA256(canonical(node_without_signature))
+]]></artwork>
+<t>Each vector presents a node, the exact canonical bytes produced by ATP <xref target="ATP-CORE" section="9" sectionFormat="of"/> + RFC 8785 JCS, and the resulting SHA-256 hash in lowercase hex. The <tt>signature</tt> field is intentionally absent from the input -- implementations MUST exclude it from canonicalization per <xref target="ATP-CORE" section="10.1" sectionFormat="of"/>.</t>
+<section anchor="sec-vector-v1-minimum-viable-request-node" numbered="true">
+  <name>Vector V1 -- minimum-viable request node</name>
+<t>Input node (no actor, no profile, no <tt>outputHash</tt>, empty parents -- represents an autonomous root request):</t>
+<sourcecode type="json"><![CDATA[
+{
+  "timestamp": "2026-01-01T00:00:00Z",
+  "scope": "test-scope-001",
+  "issuer":  {"issuerId": "test-issuer", "keyId": "test-key-1"},
+  "agent":   {"agentId": "test-agent",   "version": "1.0.0"},
+  "action":  {
+    "type": "atp:request",
+    "inputHash": "sha256:000000000000000000000000000000000000000\
+0000000000000000000000000"
+  },
+  "parents": []
+}
+]]></sourcecode>
+<t>Canonical bytes (UTF-8):</t>
+<artwork><![CDATA[
+{"action":{"inputHash":"sha256:000000000000000000000000000000000\
+0000000000000000000000000000000","type":"atp:request"},"agent":{\
+"agentId":"test-agent","version":"1.0.0"},"issuer":{"issuerId":"\
+test-issuer","keyId":"test-key-1"},"parents":[],"scope":"test-sc\
+ope-001","timestamp":"2026-01-01T00:00:00Z"}
+]]></artwork>
+<t>Expected <tt>nodeId</tt>:</t>
+<artwork><![CDATA[
+77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70
+]]></artwork>
+</section>
+<section anchor="sec-vector-v2-completion-node-with-actor-and-parent-reference" numbered="true">
+  <name>Vector V2 -- completion node with actor and parent reference</name>
+<t>Input node (completion of V1, actor present, references V1 as parent):</t>
+<sourcecode type="json"><![CDATA[
+{
+  "timestamp": "2026-01-01T00:00:01Z",
+  "scope": "test-scope-001",
+  "issuer":  {"issuerId": "test-issuer", "keyId": "test-key-1"},
+  "agent":   {"agentId": "test-agent",   "version": "1.0.0"},
+  "actor":   {"actorId": "psn:0000-test-actor", "authContext": "\
+test:none"},
+  "action":  {
+    "type": "atp:completion",
+    "inputHash":  "sha256:00000000000000000000000000000000000000\
+00000000000000000000000000",
+    "outputHash": "sha256:11111111111111111111111111111111111111\
+11111111111111111111111111"
+  },
+  "parents": ["77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4\
+c9aa5273f46ce70"]
+}
+]]></sourcecode>
+<t>Canonical bytes (UTF-8):</t>
+<artwork><![CDATA[
+{"action":{"inputHash":"sha256:000000000000000000000000000000000\
+0000000000000000000000000000000","outputHash":"sha256:1111111111\
+111111111111111111111111111111111111111111111111111111","type":"\
+atp:completion"},"actor":{"actorId":"psn:0000-test-actor","authC\
+ontext":"test:none"},"agent":{"agentId":"test-agent","version":"\
+1.0.0"},"issuer":{"issuerId":"test-issuer","keyId":"test-key-1"}\
+,"parents":["77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9\
+aa5273f46ce70"],"scope":"test-scope-001","timestamp":"2026-01-01\
+T00:00:01Z"}
+]]></artwork>
+<t>Expected <tt>nodeId</tt>:</t>
+<artwork><![CDATA[
+881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b5495ae5e
+]]></artwork>
+</section>
+<section anchor="sec-vector-v3-same-content-as-v1-with-mis-ordered-keys" numbered="true">
+  <name>Vector V3 -- same content as V1 with mis-ordered keys</name>
+<t>This vector verifies that canonicalization produces identical output regardless of input key order. Implementations MUST produce the same canonical bytes and the same <tt>nodeId</tt> for V3 as for V1.</t>
+<t>Input node (logically equivalent to V1, all keys in reverse-ish order):</t>
+<sourcecode type="json"><![CDATA[
+{
+  "scope": "test-scope-001",
+  "agent":   {"version": "1.0.0", "agentId": "test-agent"},
+  "action":  {
+    "inputHash": "sha256:000000000000000000000000000000000000000\
+0000000000000000000000000",
+    "type": "atp:request"
+  },
+  "issuer":  {"keyId": "test-key-1", "issuerId": "test-issuer"},
+  "timestamp": "2026-01-01T00:00:00Z",
+  "parents": []
+}
+]]></sourcecode>
+<t>Canonical bytes (UTF-8):</t>
+<artwork><![CDATA[
+{"action":{"inputHash":"sha256:000000000000000000000000000000000\
+0000000000000000000000000000000","type":"atp:request"},"agent":{\
+"agentId":"test-agent","version":"1.0.0"},"issuer":{"issuerId":"\
+test-issuer","keyId":"test-key-1"},"parents":[],"scope":"test-sc\
+ope-001","timestamp":"2026-01-01T00:00:00Z"}
+]]></artwork>
+<t>Expected <tt>nodeId</tt>:</t>
+<artwork><![CDATA[
+77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f46ce70
+]]></artwork>
+<t>(Identical to V1; this is the conformance signal.)</t>
+</section>
+<section anchor="sec-vector-v4-fan-in-decision-with-two-parents" numbered="true">
+  <name>Vector V4 -- fan-in decision with two parents</name>
+<t>Input node (decision synthesis with parents=[V1, V2], signed by a different issuer):</t>
+<sourcecode type="json"><![CDATA[
+{
+  "timestamp": "2026-01-01T00:00:02Z",
+  "scope": "test-scope-001",
+  "issuer":  {"issuerId": "test-issuer-2", "keyId": "test-key-2"\
+},
+  "agent":   {"agentId": "synth-agent", "version": "1.0.0"},
+  "action":  {
+    "type": "atp:decision",
+    "inputHash":  "sha256:22222222222222222222222222222222222222\
+22222222222222222222222222",
+    "outputHash": "sha256:33333333333333333333333333333333333333\
+33333333333333333333333333"
+  },
+  "parents": [
+    "77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5273f4\
+6ce70",
+    "881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac2657b549\
+5ae5e"
+  ]
+}
+]]></sourcecode>
+<t>Canonical bytes (UTF-8):</t>
+<artwork><![CDATA[
+{"action":{"inputHash":"sha256:222222222222222222222222222222222\
+2222222222222222222222222222222","outputHash":"sha256:3333333333\
+333333333333333333333333333333333333333333333333333333","type":"\
+atp:decision"},"agent":{"agentId":"synth-agent","version":"1.0.0\
+"},"issuer":{"issuerId":"test-issuer-2","keyId":"test-key-2"},"p\
+arents":["77d803c2d67e6cbe893172e5676e52b8f1bb80910bcbe1ca4c9aa5\
+273f46ce70","881b552dd7d4a8598abe44ceab49257bb63b5e6420eeaf949ac\
+2657b5495ae5e"],"scope":"test-scope-001","timestamp":"2026-01-01\
+T00:00:02Z"}
+]]></artwork>
+<t>Expected <tt>nodeId</tt>:</t>
+<artwork><![CDATA[
+25abc84ddbd4ca932502e83e92050f00b1ecb70b4e3cf071d5823b3d3d23de4c
+]]></artwork>
+<t>Parent array order is canonicalization-significant per <xref target="ATP-CORE" section="8" sectionFormat="of"/>: V1 before V2 produces a different <tt>nodeId</tt> than V2 before V1 would. Implementations MUST preserve declared parent order.</t>
+</section>
+<section anchor="sec-vector-v5-node-with-profile-field" numbered="true">
+  <name>Vector V5 -- node with <tt>profile</tt> field</name>
+<t>This vector verifies that the <tt>profile</tt> field participates in canonicalization and <tt>nodeId</tt> computation per <xref target="ATP-CORE" section="10.1" sectionFormat="of"/> and <xref target="ATP-CORE" section="19.4" sectionFormat="of"/> (Profile Framework; profile-field canonicalization).</t>
+<t><strong>Note:</strong> The <tt>profile</tt> value
+<tt>urn:ietf:params:atp:profile:test:1.0</tt> is used only to test
+canonicalization; it is not a registered identifier, and ATP defines
+no <tt>urn:ietf:params</tt> namespace. Published golden bytes are
+retained for comparability with the -00 vectors. New emissions use
+absolute <tt>https</tt> profile identifiers as specified in
+<xref target="ATP-CORE" section="19.1" sectionFormat="of"/>.</t>
+<t>Input node:</t>
+<sourcecode type="json"><![CDATA[
+{
+  "timestamp": "2026-01-01T00:00:03Z",
+  "scope": "test-scope-001",
+  "issuer":  {"issuerId": "test-issuer", "keyId": "test-key-1"},
+  "agent":   {"agentId": "test-agent",   "version": "1.0.0"},
+  "action":  {
+    "type": "atp:request",
+    "inputHash": "sha256:444444444444444444444444444444444444444\
+4444444444444444444444444"
+  },
+  "parents": [],
+  "profile": "urn:ietf:params:atp:profile:test:1.0"
+}
+]]></sourcecode>
+<t>Canonical bytes (UTF-8):</t>
+<artwork><![CDATA[
+{"action":{"inputHash":"sha256:444444444444444444444444444444444\
+4444444444444444444444444444444","type":"atp:request"},"agent":{\
+"agentId":"test-agent","version":"1.0.0"},"issuer":{"issuerId":"\
+test-issuer","keyId":"test-key-1"},"parents":[],"profile":"urn:i\
+etf:params:atp:profile:test:1.0","scope":"test-scope-001","times\
+tamp":"2026-01-01T00:00:03Z"}
+]]></artwork>
+<t>Expected <tt>nodeId</tt>:</t>
+<artwork><![CDATA[
+2356e89a5e787e9312287dfa4b3440d823b7fac59e401f060d42757e8f452803
+]]></artwork>
+<t>If an implementation produces a different <tt>nodeId</tt> for V5, the most likely cause is that the <tt>profile</tt> field has been excluded from canonicalization. ATP <xref target="ATP-CORE" section="10.1" sectionFormat="of"/> requires it to be included whenever present.</t>
+</section>
+</section>
+<section anchor="sec-ed25519-signature-vector" numbered="true">
+  <name>Ed25519 Signature Vector</name>
+<t>This section publishes one Ed25519 sign/verify vector using deterministic key material. ATP <xref target="ATP-CORE" section="10.3" sectionFormat="of"/> requires that the signature be computed over the <tt>nodeId</tt> as the 32-octet SHA-256 digest itself (not its hexadecimal encoding). The signature is encoded as base64 with padding per RFC 4648 Section 4.</t>
+<section anchor="sec-test-key-material" numbered="true">
+  <name>Test Key Material</name>
+<t>The vectors in this document use a fixed Ed25519 keypair derived from a deterministic 32-byte seed. Implementations MUST use the same seed to reproduce these vectors. <strong>This key material is for test use only and MUST NOT be used in production deployments.</strong></t>
+<figure>
+  <name>S1 Signature Material</name>
+  <artwork type="ascii-art"><![CDATA[
+Message (hex, 32 bytes):
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+aa
+
+Signature (hex, 64 bytes):
+  3f4d9fb756aba9bca11cfac15d65d82441dbf6f69adc9ba527b506c3379855\
+50
+  0a2ef1a4e471323f2e8c8d190868e4f5ef303bef1e3e57e1988b1b46d83d55\
+09
+
+Signature (base64 with padding):
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+aa
+]]></artwork>
+</figure>
+<t>A conformant implementation MUST:</t>
+<ol>
+  <li>Reproduce the public key bytes from the seed.</li>
+  <li>Reproduce the signature bytes from the seed and message.</li>
+  <li>Verify the signature against the public key and message and return success.</li>
+  <li>Reject the signature if any byte of the message, signature, or public key is altered.</li>
+</ol>
+<t>Ed25519 is deterministic per <xref target="RFC8032"/> <xref target="sec-test-key-material"/>.6: signing the same message under the same key MUST produce the same signature bytes. Implementations that produce different signature bytes for this vector are not interoperable with <xref target="ATP-CORE"/>.</t>
+</section>
+</section>
+<section anchor="sec-implementation-notes" numbered="true">
+  <name>Implementation Notes</name>
+<section anchor="sec-canonicalization-edge-cases-not-covered-in-00" numbered="true">
+  <name>Canonicalization Edge Cases Not Covered in -01</name>
+<t>This release deliberately uses simple JSON values (strings, integers, arrays of strings, plain objects) that all conformant RFC 8785 implementations handle identically. The following edge cases are not covered in -00 and will be added in subsequent revisions:</t>
+<ul>
+  <li>Floating-point and exponent-form numbers (RFC 8785's ECMAScript number serialization rules).</li>
+  <li>Unicode surrogate-pair handling and codepoints in the supplementary planes.</li>
+  <li>Strings containing escapes for control characters not in the basic ASCII range.</li>
+  <li>Very large nested structures (depth &gt; 16, breadth &gt; 256 keys).</li>
+  <li>Empty arrays and empty strings as values.</li>
+</ul>
+<t>Implementations passing the -01 vectors satisfy the floor for ATP Core conformance per <xref target="ATP-CORE" section="13.7" sectionFormat="of"/>. Implementations claiming broader RFC 8785 conformance SHOULD additionally pass the test data published by <xref target="JCS-TESTDATA"/>.</t>
+</section>
+<section anchor="sec-canonicalization-library-choices" numbered="true">
+  <name>Canonicalization Library Choices</name>
+<t>Implementations MAY use any RFC 8785 conformant canonicalization library. The reference implementation by the RFC 8785 author is available in multiple languages at <xref target="JCS-TESTDATA"/> and provides additional test data covering the edge cases listed above.</t>
+<t>ATP Core does not endorse a specific implementation. The deterministic-output guarantee of <xref target="ATP-CORE" section="9" sectionFormat="of"/> makes the choice immaterial provided the chosen library is RFC 8785 conformant.</t>
+</section>
+<section anchor="sec-reproducing-the-vectors" numbered="true">
+  <name>Reproducing the Vectors</name>
+<t>The vectors in this document are reproducible from the inputs shown. A conformant implementation given the same input MUST produce the canonical bytes and <tt>nodeId</tt> exactly as recorded. The Python script that generated these vectors is available alongside the published draft for cross-checking.</t>
+</section>
+</section>
+
+<section anchor="sec-planned-negative-and-accept-vectors" numbered="true">
+  <name>Negative and Accept Vectors (Alpha ID Sync)</name>
+<t>Vector identifiers below are taken from
+<tt>vectors/atp-core-test-vectors.json</tt> on branch
+<tt>alpha/draft-01-code</tt> at commit <tt>412fdd8</tt>. The Core
+draft's worked examples use <tt>examples/appendix-a/bundle.json</tt>
+from that same commit (byte-identical to the earlier 8b5b411 pin for
+that bundle).</t>
+<t>Reject (one or more vectors per MUST), Alpha IDs:
+J1/J2 duplicate member name; J3 unpaired surrogate; H1/H6 bare-hex
+hash; H2/H7 uppercase-hex hash; H3/H8 unknown hash prefix; T3
+lowercase "t"; T4 lowercase "z"; T7 "+00:00" offset; T6 fractional
+seconds; T5 space instead of T; T8 seconds = 60; T9 invalid date
+(2026-02-30); T10 non-ASCII digits (Arabic-Indic year digits);
+P1 parents absent; P4 parents not an array; P2 parents entry not 64
+lowercase ASCII hex (uppercase); P5 parents entry wrong length;
+P6 parents entry with trailing newline; N1 hex-string signing;
+N5 non-canonical S (S &gt;= L); N6/N7 non-canonical A or R (y &gt;= p);
+N8 small-order A; N9 small-order R; J4 integer above 2^53-1
+(9007199254740993); J5 overflow / non-finite (1e400); J7 underflow
+of a non-zero literal (1e-400); N10 missing base64 padding; N11
+embedded line break in signature; N12 trailing line break; N13
+leading space; N14 trailing space; N15 URL-safe base64 characters;
+N16 extra padding; N17 signature length 87; N18 signature length 89;
+N19 non-canonical trailing bits (86th character Q to R).</t>
+<t>Accept: C6 nested null removed; C11 null array element kept; C12
+object emptied to {} kept; P3 empty parents array; H4/H5 valid
+sha256: hash form; T1/T2 valid timestamps; J6 ordinary decimal 1.5;
+J8 literal zero with extreme exponent (0e-400); J9 subnormal
+non-zero double (5e-324); R2/R12 tip mode never reports
+lineageIncomplete; R7/R11 parent present but fails yields child
+lineageIncomplete (full / redacted); R4 withheld parent MUST NOT by
+itself yield lineageIncomplete.</t>
+</section>
+
+
+
+<section anchor="sec-security-considerations" numbered="true">
+  <name>Security Considerations</name>
+<t>The test key material in <xref target="sec-test-key-material"/> is deterministic and public. It MUST NOT be used to sign production ATP nodes. Doing so would expose those nodes to forgery by anyone who has read this document.</t>
+<t>These vectors are integrity tests, not security tests. Passing them confirms that an implementation produces correct deterministic output for the inputs shown. It does not, by itself, establish that the implementation is free of cryptographic implementation bugs that would only manifest on different inputs (timing side channels in Ed25519 signing, malleability in canonicalizer parsing, hash-truncation bugs in <tt>nodeId</tt> computation, and similar). Implementations SHOULD additionally adopt the security practices recommended by the underlying primitive specifications <xref target="RFC8032"/> <xref target="RFC8785"/>.</t>
+</section>
+<section anchor="sec-iana-considerations" numbered="true">
+  <name>IANA Considerations</name>
+<t>This document has no IANA actions.</t>
+</section>
+  </middle>
+  <back>
+    <references>
+      <name>References</name>
+    <references>
+      <name>Normative References</name>
+    <reference anchor="RFC2119" target="https://www.rfc-editor.org/info/rfc2119">
+      <front>
+        <title>Key words for use in RFCs to Indicate Requirement Levels</title>
+        <author><organization>S. Bradner</organization></author>
+        <date month="March" year="1997"/>
+      </front>
+      <seriesInfo name="RFC" value="2119"/>
+    </reference>
+    <reference anchor="RFC8174" target="https://www.rfc-editor.org/info/rfc8174">
+      <front>
+        <title>Ambiguity of Uppercase vs Lowercase in RFC 2119 Key Words</title>
+        <author><organization>B. Leiba</organization></author>
+        <date month="May" year="2017"/>
+      </front>
+      <seriesInfo name="RFC" value="8174"/>
+    </reference>
+    <reference anchor="RFC8785" target="https://www.rfc-editor.org/info/rfc8785">
+      <front>
+        <title>JSON Canonicalization Scheme (JCS)</title>
+        <author><organization>A. Rundgren, B. Jordan, S. Erdtman</organization></author>
+        <date month="June" year="2020"/>
+      </front>
+      <seriesInfo name="RFC" value="8785"/>
+    </reference>
+    <reference anchor="RFC8032" target="https://www.rfc-editor.org/info/rfc8032">
+      <front>
+        <title>Edwards-Curve Digital Signature Algorithm (EdDSA)</title>
+        <author><organization>S. Josefsson, I. Liusvaara</organization></author>
+        <date month="January" year="2017"/>
+      </front>
+      <seriesInfo name="RFC" value="8032"/>
+    </reference>
+    <reference anchor="ATP-CORE" target="https://datatracker.ietf.org/doc/draft-bates-atp/">
+      <front>
+        <title>Agent Transaction Protocol (ATP)</title>
+        <author><organization>D. Bates</organization></author>
+        <date year="2026"/>
+      </front>
+      <seriesInfo name="Internet-Draft" value="draft-bates-atp-01"/>
+    </reference>
+    </references>
+    <references>
+      <name>Informative References</name>
+    <reference anchor="JCS-TESTDATA" target="https://github.com/cyberphone/json-canonicalization">
+      <front>
+        <title>JSON Canonicalization Scheme -- multi-language reference implementations and test data</title>
+        <author><organization>A. Rundgren et al.</organization></author>
+        <date year="2025"/>
+      </front>
+    </reference>
+    </references>
+    </references>
+  </back>
+</rfc>
