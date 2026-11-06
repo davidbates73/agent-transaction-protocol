@@ -357,10 +357,99 @@ function decodeAtpSignatureB64(signatureB64) {
   return sig;
 }
 
+// RFC 8032 Edwards25519 decode + cofactor check. Matches the Python
+// reference (ed25519_verify): reject if A or R fails to decode, or if
+// [8]A or [8]R is the identity. Node's crypto.verify delegates to
+// OpenSSL; Node 18–22 accept some small-order A/R, Node 24 rejects them.
+const ED25519_P = (1n << 255n) - 19n;
+const ED25519_IDENTITY = [0n, 1n, 1n, 0n];
+
+function edMod(a) {
+  a %= ED25519_P;
+  return a < 0n ? a + ED25519_P : a;
+}
+
+function edModPow(base, exp) {
+  let result = 1n;
+  base = edMod(base);
+  while (exp > 0n) {
+    if (exp & 1n) result = (result * base) % ED25519_P;
+    base = (base * base) % ED25519_P;
+    exp >>= 1n;
+  }
+  return result;
+}
+
+const ED25519_D = edMod(-121665n * edModPow(121666n, ED25519_P - 2n));
+const ED25519_SQRT_M1 = edModPow(2n, (ED25519_P - 1n) / 4n);
+
+function edRecoverX(y, sign) {
+  if (y >= ED25519_P) return null;
+  const x2 = edMod((y * y - 1n) * edModPow(edMod(ED25519_D * y * y + 1n), ED25519_P - 2n));
+  if (x2 === 0n) return sign ? null : 0n;
+  let x = edModPow(x2, (ED25519_P + 3n) / 8n);
+  if (edMod(x * x - x2) !== 0n) x = edMod(x * ED25519_SQRT_M1);
+  if (edMod(x * x - x2) !== 0n) return null;
+  if ((x & 1n) !== sign) x = ED25519_P - x;
+  return x;
+}
+
+function edDecompress(bytes) {
+  if (!bytes || bytes.length !== 32) return null;
+  let y = 0n;
+  for (let i = 0; i < 32; i++) y |= BigInt(bytes[i]) << BigInt(8 * i);
+  const sign = y >> 255n;
+  y &= (1n << 255n) - 1n;
+  const x = edRecoverX(y, sign);
+  if (x === null) return null;
+  return [x, y, 1n, edMod(x * y)];
+}
+
+function edAdd(P, Q) {
+  const A = edMod((P[1] - P[0]) * (Q[1] - Q[0]));
+  const B = edMod((P[1] + P[0]) * (Q[1] + Q[0]));
+  const C = edMod(P[3] * 2n * ED25519_D * Q[3]);
+  const D = edMod(P[2] * 2n * Q[2]);
+  const E = B - A, F = D - C, G = D + C, H = B + A;
+  return [edMod(E * F), edMod(G * H), edMod(F * G), edMod(E * H)];
+}
+
+function edMul(s, P) {
+  let Q = ED25519_IDENTITY;
+  while (s > 0n) {
+    if (s & 1n) Q = edAdd(Q, P);
+    P = edAdd(P, P);
+    s >>= 1n;
+  }
+  return Q;
+}
+
+function edEqual(P, Q) {
+  return edMod(P[0] * Q[2] - Q[0] * P[2]) === 0n && edMod(P[1] * Q[2] - Q[1] * P[2]) === 0n;
+}
+
+/** True when the 32-byte encoding is invalid or [8]P is the identity. */
+function edSmallOrderOrInvalid(bytes) {
+  const P = edDecompress(bytes);
+  if (P === null) return true;
+  return edEqual(edMul(8n, P), ED25519_IDENTITY);
+}
+
+function rawEd25519PublicKey(publicKey) {
+  const der = publicKey.export({ format: 'der', type: 'spki' });
+  if (
+    der.length < SPKI_ED25519_PREFIX.length + 32
+    || !der.subarray(0, SPKI_ED25519_PREFIX.length).equals(SPKI_ED25519_PREFIX)
+  ) return null;
+  return der.subarray(SPKI_ED25519_PREFIX.length, SPKI_ED25519_PREFIX.length + 32);
+}
+
 export function verifyNodeId(nodeIdHex, signatureB64, publicKey) {
   try {
     const sig = decodeAtpSignatureB64(signatureB64);
     if (!sig) return false;
+    const A = rawEd25519PublicKey(publicKey);
+    if (!A || edSmallOrderOrInvalid(A) || edSmallOrderOrInvalid(sig.subarray(0, 32))) return false;
     return crypto.verify(null, Buffer.from(nodeIdHex, 'hex'), publicKey, sig);
   } catch {
     return false;
