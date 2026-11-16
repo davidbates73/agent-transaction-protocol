@@ -283,6 +283,70 @@
         ],
         "warnings": []
       }
+    },
+    {
+      "id": "empty-log",
+      "description": "Empty file (0 records): a failure, never a pass",
+      "log": "cases/empty-log.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 0,
+        "sessions": 0,
+        "errors": [
+          {
+            "line": 0,
+            "kind": "empty-log",
+            "reason": "log contains no records"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "id": "truncate-crash-tail",
+      "description": "Crash session with its final unmatched pre_tool_call deleted: KNOWN LIMITATION, passes with no warning (tail truncation is invisible to the chain)",
+      "log": "cases/truncate-crash-tail.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "pass",
+        "records": 18,
+        "sessions": 3,
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "bodies-valid",
+      "description": "Scripted session recorded with log_bodies on (includes a redacted fake key): every stored body re-hashes to its hash",
+      "log": "cases/bodies-valid.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "pass",
+        "records": 16,
+        "sessions": 2,
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "body-mismatch",
+      "description": "log_bodies session; the last record's outputBody changed and the record re-signed with the TEST-ONLY key: authentic but body != outputHash",
+      "log": "cases/body-mismatch.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 16,
+        "sessions": 2,
+        "errors": [
+          {
+            "line": 16,
+            "kind": "body-mismatch",
+            "reason": "hermes.outputBody does not match action.outputHash"
+          }
+        ],
+        "warnings": []
+      }
     }
   ]
 }

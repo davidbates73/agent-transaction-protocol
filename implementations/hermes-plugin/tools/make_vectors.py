@@ -36,10 +36,12 @@ def build(outdir):
             json.dump(key_doc, f)
         os.chmod(key_path, 0o600)
 
-        def session(name, crash):
+        def session(name, crash, bodies=False):
             env = {"HERMES_ATP_HOME": work, "HERMES_ATP_KEY": key_path,
                    "HERMES_ATP_PUB": os.path.join(work, "TEST-ONLY-key.pub"),
                    "HERMES_ATP_LOG": os.path.join(work, name)}
+            if bodies:
+                env["HERMES_ATP_LOG_BODIES"] = "true"
             _host, rec, _mod, _ = S.run_fake_session(env, clock=S.TickClock(), crash=crash,
                                                     hermes_version=S.VECTOR_HERMES_VERSION)
             with open(os.path.join(work, name), "rb") as f:
@@ -47,6 +49,11 @@ def build(outdir):
 
         sample, pub = session("sample.jsonl", crash=False)
         crash, _ = session("crash.jsonl", crash=True)
+        bodies, _ = session("bodies.jsonl", crash=False, bodies=True)
+        nb = len(S.lines_of(bodies))
+
+        def alter_body(node):
+            node["hermes"]["outputBody"] = {"altered": True}
         import atp  # noqa: E402  (implementations/python)
         wrong_pub = atp.ed25519_public_key(bytes(32))
 
@@ -62,6 +69,10 @@ def build(outdir):
             ("blank-line", "Blank line inserted before line 5", S.insert_line(sample, 4, b""), "test"),
             ("garbage-line", "Non-JSON line inserted before line 5", S.insert_line(sample, 4, b"not json"), "test"),
             ("wrong-key", "Valid log checked against a different public key", sample, "wrong"),
+            ("empty-log", "Empty file (0 records): a failure, never a pass", b"", "test"),
+            ("truncate-crash-tail", "Crash session with its final unmatched pre_tool_call deleted: KNOWN LIMITATION, passes with no warning (tail truncation is invisible to the chain)", S.delete_line(crash, len(S.lines_of(crash)) - 1), "test"),
+            ("bodies-valid", "Scripted session recorded with log_bodies on (includes a redacted fake key): every stored body re-hashes to its hash", bodies, "test"),
+            ("body-mismatch", "log_bodies session; the last record's outputBody changed and the record re-signed with the TEST-ONLY key: authentic but body != outputHash", S.resign_line(bodies, nb - 1, alter_body), "test"),
         ]
         pubs = {"test": pub, "wrong": wrong_pub}
         with open(os.path.join(outdir, "TEST-ONLY-key.json"), "w") as f:

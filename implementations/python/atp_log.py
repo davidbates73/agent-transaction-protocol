@@ -7,6 +7,14 @@ One signed ATP node per line. Per-session lineage is carried by:
   * hermes.seq       -- 0-based position of the record in its session
                         (profile-defined field; see implementations/hermes-plugin/README.md)
 
+When a record stores hermes.inputBody / hermes.outputBody (log_bodies on), the body must
+re-hash to action.inputHash / action.outputHash and match hermes.*Length ("body-mismatch").
+An empty log (no records) is a failure ("empty-log", line 0).
+
+Known limitation: deleting records from the END of a session (tail truncation) leaves a valid
+chain and cannot be detected from the log alone; it only shows up when it orphans a request
+(an "unmatched-request" warning). Anchor the last nodeId externally if that matters.
+
 The verdict format is shared byte-for-byte with implementations/node/src/atp-log.js;
 any change here MUST be mirrored there (the cross-implementation test diffs both).
 """
@@ -68,6 +76,29 @@ def _event(node) -> Optional[str]:
 
 def _corr(node, family) -> Optional[str]:
     return _str_field(node, "apiRequestId" if family == "api" else "toolCallId")
+
+
+def _body_problem(node, which) -> Optional[str]:
+    """Reason text when a stored hermes.<which>Body disagrees with its hash/length, else None."""
+    h = node.get("hermes")
+    if not isinstance(h, dict) or (which + "Body") not in h:
+        return None
+    action = node.get("action") if isinstance(node.get("action"), dict) else {}
+    want = action.get(which + "Hash")
+    if not isinstance(want, str):
+        return f"hermes.{which}Body present but action.{which}Hash is missing"
+    body = h[which + "Body"]
+    try:
+        data = body.encode("utf-8") if isinstance(body, str) else atp.canonicalize(body).encode("utf-8")
+    except Exception:
+        return f"hermes.{which}Body cannot be canonicalized"
+    if "sha256:" + atp.sha256_hex(data) != want:
+        return f"hermes.{which}Body does not match action.{which}Hash"
+    if (which + "Length") in h:
+        n = h[which + "Length"]
+        if isinstance(n, bool) or not isinstance(n, (int, float)) or n != len(data):
+            return f"hermes.{which}Length does not match hermes.{which}Body"
+    return None
 
 
 def split_lines(data: bytes) -> List[str]:
@@ -137,6 +168,11 @@ def verify_log(data: bytes, public_key: bytes) -> dict:
             elif not atp.verify_node_id(rid, node["signature"], public_key):
                 err(pos, "tampered", "signature does not verify with the supplied public key")
                 intact = False
+        if intact:
+            for which in ("input", "output"):
+                problem = _body_problem(node, which)
+                if problem is not None:
+                    err(pos, "body-mismatch", problem)
         scope = node.get("scope")
         q = _seq(node)
         if not isinstance(scope, str) or q is None:
@@ -167,6 +203,9 @@ def verify_log(data: bytes, public_key: bytes) -> dict:
             err(pos, "out-of-order", f"session {scope}: seq {q} is not after seq {st['seq']}")
         if st is None or q > st["seq"]:
             state[scope] = {"id": cid, "seq": q}
+
+    if not lines:
+        err(0, "empty-log", "log contains no records")
 
     # Unmatched request (pre) events are WARNINGS, not failures (draft-bates-atp §16.2).
     closed = set()

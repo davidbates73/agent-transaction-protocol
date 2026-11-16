@@ -5,10 +5,19 @@
 //   parents[0]   -- nodeId of the previous record in the same scope ([] for the first)
 //   hermes.seq   -- 0-based position of the record in its session (profile-defined field)
 //
+// When a record stores hermes.inputBody / hermes.outputBody (log_bodies on), the body must
+// re-hash to action.inputHash / action.outputHash and match hermes.*Length ("body-mismatch").
+// An empty log (no records) is a failure ("empty-log", line 0).
+//
+// Known limitation: deleting records from the END of a session (tail truncation) leaves a valid
+// chain and cannot be detected from the log alone; it only shows up when it orphans a request
+// (an "unmatched-request" warning). Anchor the last nodeId externally if that matters.
+//
 // The verdict format is shared byte-for-byte with implementations/python/atp_log.py;
 // any change here MUST be mirrored there (the cross-implementation test diffs both).
 
-import { parseAtpJson, structuralError, computeNodeId, verifyNodeId, publicKeyFromRaw } from './atp.js';
+import { createHash } from 'node:crypto';
+import { parseAtpJson, structuralError, computeNodeId, verifyNodeId, publicKeyFromRaw, canonicalize } from './atp.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const BLANK = /^[ \t\r]*$/;
@@ -42,6 +51,30 @@ function strField(node, key) {
 }
 const eventOf = (node) => strField(node, 'event');
 const corrOf = (node, fam) => strField(node, fam === 'api' ? 'apiRequestId' : 'toolCallId');
+
+/** Reason text when a stored hermes.<which>Body disagrees with its hash/length, else null. */
+function bodyProblem(node, which) {
+  const h = node.hermes;
+  if (!isObj(h) || !own(h, which + 'Body')) return null;
+  const action = isObj(node.action) ? node.action : {};
+  const want = action[which + 'Hash'];
+  if (typeof want !== 'string') return `hermes.${which}Body present but action.${which}Hash is missing`;
+  const body = h[which + 'Body'];
+  let data;
+  try {
+    data = Buffer.from(typeof body === 'string' ? body : canonicalize(body), 'utf8');
+  } catch {
+    return `hermes.${which}Body cannot be canonicalized`;
+  }
+  if ('sha256:' + createHash('sha256').update(data).digest('hex') !== want) {
+    return `hermes.${which}Body does not match action.${which}Hash`;
+  }
+  if (own(h, which + 'Length')) {
+    const n = h[which + 'Length'];
+    if (typeof n !== 'number' || n !== data.length) return `hermes.${which}Length does not match hermes.${which}Body`;
+  }
+  return null;
+}
 
 export function splitLines(buf) {
   const text = Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf);
@@ -105,6 +138,12 @@ export function verifyLog(data, publicKeyRaw) {
         err(pos, 'tampered', 'signature does not verify with the supplied public key'); intact = false;
       }
     }
+    if (intact) {
+      for (const which of ['input', 'output']) {
+        const problem = bodyProblem(node, which);
+        if (problem !== null) err(pos, 'body-mismatch', problem);
+      }
+    }
     const scope = node.scope;
     const q = seqOf(node);
     if (typeof scope !== 'string' || q === null) {
@@ -135,6 +174,8 @@ export function verifyLog(data, publicKeyRaw) {
     }
     if (st === undefined || q > st.seq) state.set(scope, { id: cid, seq: q });
   });
+
+  if (lines.length === 0) err(0, 'empty-log', 'log contains no records');
 
   const closed = new Set();
   const key = (s, f, c) => JSON.stringify([s, f, c]);

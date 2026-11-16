@@ -121,8 +121,9 @@ def _clean_str(s: str) -> str:
     return s.encode("utf-8", "replace").decode("utf-8") if atp.has_unpaired_surrogate(s) else s
 
 
-def normalize(value, depth: int = 0):
-    """JSON-normalise and redact a payload (sensitive keys -> "[REDACTED]")."""
+def normalize(value, depth: int = 0, hits=None):
+    """JSON-normalise and redact a payload (sensitive keys -> "[REDACTED]").
+    Each key redaction appends to *hits* when a list is passed."""
     if depth > MAX_DEPTH:
         return "[TRUNCATED]"
     if value is None or isinstance(value, bool):
@@ -139,22 +140,29 @@ def normalize(value, depth: int = 0):
         out = {}
         for k, v in value.items():
             ks = _clean_str(str(k))
-            out[ks] = REDACTED if _is_sensitive_key(ks) else normalize(v, depth + 1)
+            if _is_sensitive_key(ks):
+                out[ks] = REDACTED
+                if hits is not None:
+                    hits.append(ks)
+            else:
+                out[ks] = normalize(v, depth + 1, hits)
         return out
     if isinstance(value, (list, tuple)):
-        return [normalize(v, depth + 1) for v in value]
+        return [normalize(v, depth + 1, hits) for v in value]
     for attr in ("model_dump", "to_dict", "dict"):
         fn = getattr(value, attr, None)
         if callable(fn):
             try:
-                return normalize(fn(), depth + 1)
+                return normalize(fn(), depth + 1, hits)
             except Exception:  # noqa: BLE001
                 break
     return _clean_str(str(value))
 
 
 def scrub(value):
-    """Extra string scrubbing applied to bodies only when log_bodies is on."""
+    """Scrub credential-shaped substrings (Bearer/Basic, sk-/xai-/pk-/rk- keys) from every string.
+    Applied to every payload before hashing, so inputHash/outputHash cover exactly the bytes a
+    stored inputBody/outputBody would hold."""
     if isinstance(value, str):
         for rx, rep in _SCRUB:
             value = rx.sub(rep, value)
@@ -189,8 +197,10 @@ def _safe_url(u: str) -> str:
 
 def detect_hermes_version() -> tuple:
     """Best-effort (version, commit). Hermes v0.23.1's authority is
-    hermes_cli.version_info.get_version_info(); package metadata and
-    hermes_cli.__version__ report a "0.0.0" placeholder on source installs."""
+    hermes_cli.version_info.get_version_info(); package metadata reports a "0.0.0"
+    placeholder on source installs. v0.23.1 publishes no version accessor in its plugin API
+    (hermes_cli/data/plugin_api.json), so this one guarded private import remains; it is the
+    only one, and a failure just falls back to metadata, then "unknown"."""
     try:
         from hermes_cli.version_info import get_version_info
         info = get_version_info()
@@ -209,13 +219,6 @@ def detect_hermes_version() -> tuple:
                     return v, None
             except Exception:  # noqa: BLE001
                 pass
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        import hermes_cli
-        v = getattr(hermes_cli, "__version__", None)
-        if isinstance(v, str) and v and v != "0.0.0":
-            return v, None
     except Exception:  # noqa: BLE001
         pass
     return "unknown", None
@@ -459,11 +462,17 @@ class Recorder:
             action["type"] = "atp:failure"
 
         def digest(value, which):
-            n = normalize(value)
+            # Hash, length and (optional) stored body all cover the SAME redacted payload, so
+            # sha256(payload_bytes(<which>Body)) == <which>Hash and verify can recompute it.
+            hits: list = []
+            raw = normalize(value, hits=hits)
+            n = scrub(raw)
             b = payload_bytes(n)
             ext[which + "Length"] = len(b)
+            if hits or n != raw:
+                ext[which + "Redacted"] = True
             if self.config.log_bodies:
-                ext[which + "Body"] = scrub(n)
+                ext[which + "Body"] = n
             return "sha256:" + hashlib.sha256(b).hexdigest()
 
         if inp is not None:

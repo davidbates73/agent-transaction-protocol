@@ -46,7 +46,32 @@ class CrossImplTests(unittest.TestCase):
             "garbage": S.insert_line(cls.data, 2, b"{not json"),
             "multi": S.swap_lines(S.delete_line(S.edit_one_byte(cls.data, 1), 5), 10, 11),
             "empty": b"",
+            "newline-only": b"\n",
+            "crash-tail-deleted": S.delete_line(cls.data, n - 1),
         }
+        bdir = os.path.join(cls.dir, "bodies")
+        S.run_fake_session({"HERMES_ATP_HOME": bdir, "HERMES_ATP_KEY": os.path.join(cls.dir, "key"),
+                            "HERMES_ATP_PUB": cls.pub, "HERMES_ATP_LOG_BODIES": "true"}, secrets=True)
+        with open(os.path.join(bdir, "records.jsonl"), "rb") as f:
+            bodies = f.read()
+        with open(os.path.join(cls.dir, "key")) as f:
+            seed_hex = json.load(f)["seedHex"]
+        nb = len(S.lines_of(bodies))
+
+        def alter_out(node):
+            node["hermes"]["outputBody"] = {"altered": True}
+
+        def alter_in(node):
+            node["hermes"]["inputBody"] = "altered"
+
+        def alter_len(node):
+            node["hermes"]["outputLength"] = node["hermes"]["outputLength"] + 1
+        cls.cases.update({
+            "bodies-valid": bodies,
+            "body-mismatch-out": S.resign_line(bodies, nb - 1, alter_out, seed_hex),
+            "body-mismatch-in": S.resign_line(bodies, 0, alter_in, seed_hex),
+            "body-length-mismatch": S.resign_line(bodies, nb - 1, alter_len, seed_hex),
+        })
 
     @classmethod
     def tearDownClass(cls):
@@ -70,7 +95,7 @@ class CrossImplTests(unittest.TestCase):
                 self.assertEqual(pc, 0 if v["verdict"] == "pass" else 2)
 
     def test_identical_text_output(self):
-        for name in ("valid", "multi", "swap-lines"):
+        for name in ("valid", "multi", "swap-lines", "empty", "body-mismatch-out"):
             log = self.path(name)
             self.assertEqual(run("python", log, self.pub)[1], run("node", log, self.pub)[1])
 
@@ -82,6 +107,16 @@ class CrossImplTests(unittest.TestCase):
         self.assertEqual(kinds("edit-byte"), ("fail", [(5, "tampered")]))
         self.assertEqual(kinds("delete-line"), ("fail", [(3, "missing")]))
         self.assertEqual(kinds("swap-lines"), ("fail", [(13, "out-of-order"), (14, "out-of-order")]))
+        self.assertEqual(kinds("empty"), ("fail", [(0, "empty-log")]))
+        self.assertEqual(kinds("newline-only"), ("fail", [(1, "tampered")]))  # one blank line
+        self.assertEqual(kinds("bodies-valid"), ("pass", []))
+        nb = len(S.lines_of(self.cases["bodies-valid"]))
+        self.assertEqual(kinds("body-mismatch-out"), ("fail", [(nb, "body-mismatch")]))
+        # Line 1 changed nodeId, so line 2's parent link breaks as well: both reported.
+        self.assertEqual(kinds("body-mismatch-in")[1][0], (1, "body-mismatch"))
+        self.assertEqual(kinds("body-length-mismatch"), ("fail", [(nb, "body-mismatch")]))
+        # Known limitation (H1-F3): deleting a crash tail's unmatched pre leaves a valid chain.
+        self.assertEqual(kinds("crash-tail-deleted"), ("pass", []))
         v = json.loads(run("python", self.path("valid"), self.pub, "--json")[1])
         self.assertEqual([w["kind"] for w in v["warnings"]], ["unmatched-request"])  # crash session
 

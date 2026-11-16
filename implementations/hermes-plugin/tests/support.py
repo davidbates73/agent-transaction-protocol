@@ -1,6 +1,7 @@
 """Shared helpers for the Hermes recorder tests and vector generator."""
 
 import hashlib
+import json
 import os
 import re
 import sys
@@ -98,3 +99,20 @@ def insert_line(data: bytes, i: int, raw: bytes) -> bytes:
     lines = lines_of(data)
     lines.insert(i, raw)
     return join(lines)
+
+
+def resign_line(data: bytes, line_index: int, mutate, seed_hex: str = None) -> bytes:
+    """Apply mutate(node) to one record, then recompute its nodeId and re-sign it with the
+    TEST-ONLY key: the record stays authentic, so only content-level checks can catch it.
+    Models a buggy recorder (or anyone holding the signing key)."""
+    import atp  # implementations/python
+    ls = lines_of(data)
+    node = json.loads(ls[line_index].decode("utf-8"))
+    mutate(node)
+    node.pop("nodeId", None)
+    node.pop("signature", None)
+    rid = atp.compute_node_id(node)
+    node["nodeId"] = rid
+    node["signature"] = atp.sign_node_id(rid, bytes.fromhex(seed_hex or TEST_SEED_HEX))
+    ls[line_index] = json.dumps(node, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return join(ls)

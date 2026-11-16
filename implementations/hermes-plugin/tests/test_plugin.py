@@ -110,7 +110,8 @@ class RecordTests(Base):
 
     def test_signatures_verify_with_generated_key(self):
         self.run_session()
-        pub = base64.b64decode(open(os.path.join(self.atp_home, "key.pub")).read())
+        with open(os.path.join(self.atp_home, "key.pub")) as f:
+            pub = base64.b64decode(f.read())
         for r in read_records(self.log):
             self.assertEqual(atp.compute_node_id(r), r["nodeId"])
             self.assertTrue(atp.verify_node_id(r["nodeId"], r["signature"], pub))
@@ -210,6 +211,67 @@ class SecretTests(Base):
         self.assertIn("turn turn-1 attempt", text)
         self.assertIn("[REDACTED]", text)
         self.assertEqual(self.verify()["verdict"], "pass")
+
+    def test_bodies_rehash_to_their_hashes_lockstep(self):
+        """QA H1-F1: every stored body must re-hash to the hash in the same record, including
+        bodies whose secrets were scrubbed (the hash covers the redacted form)."""
+        self.env["HERMES_ATP_LOG_BODIES"] = "true"
+        self.run_session(secrets=True)
+        checked, scrubbed_key = 0, 0
+        for r in read_records(self.log):
+            h = r["hermes"]
+            for which in ("input", "output"):
+                if which + "Body" not in h:
+                    continue
+                body = h[which + "Body"]
+                data = body.encode("utf-8") if isinstance(body, str) else atp.canonicalize(body).encode("utf-8")
+                self.assertEqual(r["action"][which + "Hash"], atp.payload_hash(body), (h["event"], which))
+                self.assertEqual(h[which + "Length"], len(data))
+                checked += 1
+                if "sk-" not in data.decode() and "[REDACTED]" in data.decode() and h.get(which + "Redacted"):
+                    scrubbed_key += 1
+        self.assertGreaterEqual(checked, 10)
+        self.assertGreaterEqual(scrubbed_key, 1)
+        # The 429 error carried the fake key in free text: its body is scrubbed and hash-consistent.
+        err = [r for r in read_records(self.log) if r["hermes"]["event"] == "api_request_error"]
+        self.assertTrue(err and all(r["hermes"].get("outputRedacted") for r in err))
+        self.assertEqual(self.verify()["verdict"], "pass")
+
+    def test_hashes_identical_with_bodies_on_and_off(self):
+        """Hashing is over the scrubbed payload in every case, so the flag never changes a hash."""
+        def hashes(bodies):
+            d = tempfile.mkdtemp(prefix="atp-hh-", dir=self.dir)
+            env = {"HERMES_ATP_HOME": d}
+            if bodies:
+                env["HERMES_ATP_LOG_BODIES"] = "true"
+            S.run_fake_session(env, clock=S.TickClock(), secrets=True)
+            out = []
+            for r in read_records(os.path.join(d, "records.jsonl")):
+                out.append((r["action"].get("inputHash"), r["action"].get("outputHash"),
+                            r["hermes"].get("inputLength"), r["hermes"].get("outputLength"),
+                            r["hermes"].get("inputRedacted"), r["hermes"].get("outputRedacted")))
+            return out
+        self.assertEqual(hashes(False), hashes(True))
+
+    def test_verify_flags_body_hash_mismatch(self):
+        self.env["HERMES_ATP_LOG_BODIES"] = "true"
+        _h, rec, _m, _o = self.run_session()
+        with open(self.log, "rb") as f:
+            data = f.read()
+        n = len(S.lines_of(data))
+        seed = rec._seed if hasattr(rec, "_seed") else None
+        self.assertIsNotNone(seed, "recorder seed attribute")
+
+        def alter(node):
+            node["hermes"]["outputBody"] = "something else"
+        bad = S.resign_line(data, n - 1, alter, seed_hex=seed.hex())
+        v = self.verify(bad)
+        self.assertEqual(v["verdict"], "fail")
+        self.assertEqual([(e["line"], e["kind"]) for e in v["errors"]], [(n, "body-mismatch")])
+
+    def test_verify_empty_log_fails(self):
+        v = atp_log.verify_log(b"", bytes(32))
+        self.assertEqual((v["verdict"], v["errors"][0]["kind"], v["errors"][0]["line"]), ("fail", "empty-log", 0))
 
     def test_bodies_flag_from_config_file(self):
         os.makedirs(self.atp_home)
