@@ -205,6 +205,16 @@ defines its meaning on a session's first record: "this session was delegated fro
 `parentSessionId`, during its turn `parentTurnId`". Slice 1 logs keep verifying unchanged;
 `verify` simply also lists the links they contain.
 
+`--json` output always has a `links` key, an empty list when there are none, even for
+slice 1 logs. The key is additive: verdicts, errors and warnings are unchanged, and
+consumers should ignore keys they don't know.
+
+**Backlog (not in slice 2):** a link names the parent *session*, not the parent's
+delegating record. Making it a full ATP lineage edge, where the child's first record
+lists the `delegate_task` record in `parents`, would change slice 1's rule that a
+session's first record has no parents, and it touches the spec, so it is deferred to a
+later slice.
+
 ## Tests
 
 ```sh
