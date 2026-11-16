@@ -2,6 +2,7 @@
 """ATP command-line tool (Python).
 
     python3 atp_cli.py verify <bundle.json> --keys <keys.json> [--mode full|tip|bounded|redacted] [--depth N]
+    python3 atp_cli.py verify <records.jsonl> --pub <key.pub> [--json]   # append-only record log (Hermes recorder)
     python3 atp_cli.py nodeid <node.json>
     python3 atp_cli.py interop                 # rebuild Appendix A and compare with the Node.js bundle
 """
@@ -14,6 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import atp  # noqa: E402
+import atp_log  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXAMPLE = os.path.join(HERE, "..", "..", "examples", "appendix-a")
@@ -46,7 +48,26 @@ def build_appendix_a():
     return [n1, n2, n3, n4, n5, n6, n7]
 
 
+def cmd_verify_log(a):
+    try:
+        with open(a.pub, encoding="utf-8") as f:
+            pub = atp_log.load_public_key(f.read())
+        with open(a.bundle, "rb") as f:
+            data = f.read()
+    except (OSError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    result = atp_log.verify_log(data, pub)
+    print(atp_log.format_json(result) if a.json else atp_log.format_text(result))
+    return 0 if result["verdict"] == "pass" else 2
+
+
 def cmd_verify(a):
+    if a.pub:
+        return cmd_verify_log(a)
+    if not a.keys:
+        print("error: verify needs --keys <keys.json> (bundle) or --pub <key.pub> (record log)", file=sys.stderr)
+        return 1
     bundle = atp.load_json(a.bundle)
     nodes = bundle if isinstance(bundle, list) else bundle["nodes"]
     boundary = {"depth": a.depth} if a.mode == "bounded" else None
@@ -87,7 +108,9 @@ def cmd_interop(_a):
 def main():
     p = argparse.ArgumentParser(description="ATP command-line tool (Python)")
     sub = p.add_subparsers(dest="cmd", required=True)
-    v = sub.add_parser("verify"); v.add_argument("bundle"); v.add_argument("--keys", required=True)
+    v = sub.add_parser("verify"); v.add_argument("bundle"); v.add_argument("--keys")
+    v.add_argument("--pub", help="Ed25519 public key (.pub, base64) for verifying a JSONL record log")
+    v.add_argument("--json", action="store_true", help="machine-readable verdict (record-log mode)")
     v.add_argument("--mode", default="full", choices=["full", "tip", "bounded", "redacted"])
     v.add_argument("--depth", type=int, default=1); v.add_argument("--target")
     v.set_defaults(fn=cmd_verify)
