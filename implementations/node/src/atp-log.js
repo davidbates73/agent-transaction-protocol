@@ -9,6 +9,10 @@
 // re-hash to action.inputHash / action.outputHash and match hermes.*Length ("body-mismatch").
 // An empty log (no records) is a failure ("empty-log", line 0).
 //
+// Subagent links (slice 2): an intact first record (seq 0) carrying hermes.parentSessionId
+// links that session to its parent; every link is listed in "links" (in line order). A link
+// whose parent session has no record in the log is a WARNING ("missing-parent-session").
+//
 // Known limitation: deleting records from the END of a session (tail truncation) leaves a valid
 // chain and cannot be detected from the log alone; it only shows up when it orphans a request
 // (an "unmatched-request" warning). Anchor the last nodeId externally if that matters.
@@ -200,12 +204,29 @@ export function verifyLog(data, publicKeyRaw) {
     }
   }
 
+  // Parent -> child session links, from each session's intact first record.
+  const links = [];
+  const linked = new Set();
+  for (const [pos, node] of good) {
+    if (seqOf(node) !== 0 || linked.has(node.scope)) continue;
+    const parent = strField(node, 'parentSessionId');
+    if (parent === null) continue;
+    const child = node.scope;
+    linked.add(child);
+    links.push({ line: pos, parent, child });
+    if (!scopes.has(parent)) {
+      warnings.push({ line: pos, kind: 'missing-parent-session', reason: `session ${child}: parent session ${parent} has no records in this log` });
+    }
+  }
+  warnings.sort((a, b) => a.line - b.line); // stable (ES2019): same-line warnings keep their order
+
   return {
     verdict: errors.length ? 'fail' : 'pass',
     records: lines.length,
     sessions: scopes.size,
     errors,
     warnings,
+    links,
   };
 }
 
@@ -215,5 +236,6 @@ export function formatText(r) {
   const out = [`${r.verdict.toUpperCase()}  ${r.records} records, ${r.sessions} sessions, ${r.errors.length} errors, ${r.warnings.length} warnings`];
   for (const e of r.errors) out.push(`  line ${e.line}: ${e.kind.toUpperCase()}: ${e.reason}`);
   for (const w of r.warnings) out.push(`  line ${w.line}: WARNING ${w.kind}: ${w.reason}`);
+  for (const l of r.links ?? []) out.push(`  line ${l.line}: LINK session ${l.parent} -> session ${l.child}`);
   return out.join('\n');
 }

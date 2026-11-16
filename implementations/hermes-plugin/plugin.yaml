@@ -1,6 +1,6 @@
 name: atp-recorder
-version: 0.1.0
-description: Observe-only recorder that writes every Hermes main-loop API request/response/error and tool call as a signed ATP (draft-bates-atp) record to a local append-only JSONL log.
+version: 0.2.0
+description: Observe-only recorder that writes every Hermes main-loop API request/response/error and tool call as a signed ATP (draft-bates-atp) record, linking subagent sessions to their parent, to a local append-only JSONL log.
 license: BSD-3-Clause
 homepage: https://github.com/davidbates73/agent-transaction-protocol
 provides_tools: []
@@ -10,3 +10,4 @@ provides_hooks:
   - api_request_error
   - pre_tool_call
   - post_tool_call
+  - subagent_start

@@ -131,6 +131,46 @@ class FakeHermes:
                     error_message=None if status == "ok" else "failed with " + FAKE_API_KEY)
         return blocked
 
+    def subagent_start(self, parent_sid, parent_turn, child_sid, child_subagent_id, *, parent_subagent_id=None,
+                       goal="", secrets=True):
+        """subagent_start as Hermes v0.23.1 fires it (tools/delegate_tool.py, before the child runs)."""
+        self.invoke("subagent_start", parent_session_id=parent_sid, parent_turn_id=parent_turn,
+                    parent_subagent_id=parent_subagent_id, child_session_id=child_sid,
+                    child_subagent_id=child_subagent_id, child_role="leaf",
+                    child_goal=goal + (" (use key " + FAKE_API_KEY + ")" if secrets else ""))
+
+    def subagent_stop(self, parent_sid, parent_turn, child_sid):
+        self.invoke("subagent_stop", parent_session_id=parent_sid, parent_turn_id=parent_turn,
+                    child_session_id=child_sid, child_role="leaf", child_summary="done", child_status="completed",
+                    tool_call_history=[], duration_ms=40)
+
+    def run_real_subagent_session(self, *, secrets=True, sid="sess-main", child="sess-child",
+                                  grandchild="sess-grandchild"):
+        """v0.23.1-shaped delegation: parent -> child -> grandchild. No parent_session_id on the five
+        hooks; the link only arrives via subagent_start. Child task_id is its subagent id (as real)."""
+        turn = "turn-1"
+        self.api_call(sid, turn, "req-1", 1, tool_calls=1, secrets=secrets)
+        ct, gt = "child-turn-1", "grandchild-turn-1"
+
+        def grandchild_run():
+            self.subagent_start(child, ct, grandchild, "sa-1-test", parent_subagent_id="sa-0-test",
+                                goal="count the lines", secrets=secrets)
+            self.api_call(grandchild, gt, "greq-1", 1, task="sa-1-test", secrets=secrets)
+            self.subagent_stop(child, ct, grandchild)
+
+        def child_run():
+            self.subagent_start(sid, turn, child, "sa-0-test", goal="read the README", secrets=secrets)
+            self.api_call(child, ct, "creq-1", 1, tool_calls=1, task="sa-0-test", secrets=secrets)
+            self.tool_call(child, ct, "creq-1", "ccall-1", "delegate_task", {"goal": "count the lines"},
+                           '{"summary": "3 lines"}', run=grandchild_run, task="sa-0-test")
+            self.api_call(child, ct, "creq-2", 2, task="sa-0-test", secrets=secrets)
+            self.subagent_stop(sid, turn, child)
+
+        self.tool_call(sid, turn, "req-1", "call-1", "delegate_task", {"goal": "read the README"},
+                       '{"summary": "done"}', run=child_run)
+        self.api_call(sid, turn, "req-2", 2, secrets=secrets)
+        return {"turn_completed": True}
+
     def run_scripted_session(self, *, secrets=True, sid="sess-main", child="sess-child"):
         """One user turn: API -> tool -> delegate (subagent) -> API error + retry -> final API."""
         turn = "turn-1"

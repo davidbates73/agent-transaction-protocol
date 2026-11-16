@@ -17,7 +17,8 @@ import fake_hermes as FH  # noqa: E402
 import atp  # noqa: E402  (implementations/python)
 import atp_log  # noqa: E402
 
-HOOKS = {"pre_api_request", "post_api_request", "api_request_error", "pre_tool_call", "post_tool_call"}
+RECORD_HOOKS = {"pre_api_request", "post_api_request", "api_request_error", "pre_tool_call", "post_tool_call"}
+HOOKS = RECORD_HOOKS | {"subagent_start"}  # slice 2: links only, never a record
 
 
 def read_records(path):
@@ -48,7 +49,7 @@ class Base(unittest.TestCase):
 
 
 class RegistrationTests(Base):
-    def test_registers_exactly_the_five_observer_hooks(self):
+    def test_registers_the_five_observer_hooks_plus_subagent_start(self):
         host, *_ = self.run_session()
         self.assertEqual(set(host.hooks), HOOKS)
         self.assertTrue(all(len(v) == 1 for v in host.hooks.values()))
@@ -340,6 +341,128 @@ class KeyAndLogTests(Base):
         [t.join() for t in ts]
         r = self.verify()
         self.assertEqual((r["verdict"], r["records"], r["sessions"], r["warnings"]), ("pass", 120, 2, []))
+
+
+class SubagentTests(Base):
+    """Slice 2: v0.23.1-shaped delegation (link only via subagent_start)."""
+
+    def run_real(self, **kw):
+        return S.run_fake_session(self.env, real_subagents=True, **kw)
+
+    def by_scope(self):
+        by = {}
+        for r in read_records(self.log):
+            by.setdefault(r["scope"], []).append(r)
+        return by
+
+    def test_child_first_record_carries_parent_link(self):
+        host, *_ = self.run_real()
+        by = self.by_scope()
+        self.assertEqual(set(by), {"sess-main", "sess-child", "sess-grandchild"})
+        c0, g0 = by["sess-child"][0]["hermes"], by["sess-grandchild"][0]["hermes"]
+        self.assertEqual((c0["seq"], c0["parentSessionId"], c0["parentTurnId"]), (0, "sess-main", "turn-1"))
+        self.assertNotIn("parentSubagentId", c0)  # top-level child: Hermes passes None
+        self.assertEqual((g0["parentSessionId"], g0["parentTurnId"], g0["parentSubagentId"]),
+                         ("sess-child", "child-turn-1", "sa-0-test"))
+        # Only the first record of a child chain carries the link; the parent chain never does.
+        for scope, rs in by.items():
+            for r in rs[1:] if scope != "sess-main" else rs:
+                for f in ("parentSessionId", "parentTurnId", "parentSubagentId"):
+                    self.assertNotIn(f, r["hermes"], (scope, r["hermes"]["seq"]))
+        # The real fake never passed parent_session_id on the five hooks.
+        self.assertFalse(any("parent_session_id" in kw for h, kw in host.fired if h in RECORD_HOOKS))
+        self.assertEqual(host.callback_errors, [])
+        self.assertEqual(host.returns, [])
+
+    def test_subagent_start_writes_no_record(self):
+        host, *_ = self.run_real()
+        n = sum(1 for h, _kw in host.fired if h in RECORD_HOOKS)
+        self.assertEqual(len(read_records(self.log)), n)
+        self.assertTrue(any(h == "subagent_start" for h, _kw in host.fired))
+        self.assertFalse(any(r["hermes"]["event"].startswith("subagent") for r in read_records(self.log)))
+
+    def test_subagent_start_alone_does_no_io_and_returns_none(self):
+        mod = FH.load_plugin(S.PLUGIN)
+        rec_mod = S.recorder_module(mod)
+        mod._recorder = rec_mod.Recorder(rec_mod.Config.from_environment(self.env))
+        host = FH.FakeHermes()
+        host.load(mod)
+        host.subagent_start("p", "t", "c", "sa-x")
+        for junk in ({}, {"child_session_id": 5, "parent_session_id": None}, {"child_session_id": "c"},
+                     {"child_session_id": "c", "parent_session_id": ["x"]}):
+            host.invoke("subagent_start", **junk)
+        self.assertFalse(os.path.exists(self.atp_home))
+        self.assertEqual((host.callback_errors, host.returns), ([], []))
+
+    def test_no_goal_text_or_secrets_logged(self):
+        self.run_real(secrets=True)
+        with open(self.log, encoding="utf-8") as f:
+            text = f.read()
+        for s in (FH.FAKE_API_KEY, FH.FAKE_AUTH, "read the README", "count the lines", "leaf"):
+            self.assertNotIn(s, text)
+
+    def test_hook_kwargs_win_over_subagent_start(self):
+        mod = FH.load_plugin(S.PLUGIN)
+        rec_mod = S.recorder_module(mod)
+        mod._recorder = rec_mod.Recorder(rec_mod.Config.from_environment(self.env))
+        host = FH.FakeHermes()
+        host.load(mod)
+        host.subagent_start("from-hook", "t0", "kid", "sa-k")
+        host.api_call("kid", "kt", "k1", 1, parent="from-kwargs", secrets=False)
+        first = read_records(self.log)[0]["hermes"]
+        self.assertEqual((first["parentSessionId"], first["parentTurnId"]), ("from-kwargs", "t0"))
+
+    def test_link_consumed_once_and_pending_links_bounded(self):
+        mod = FH.load_plugin(S.PLUGIN)
+        rec_mod = S.recorder_module(mod)
+        rec = rec_mod.Recorder(rec_mod.Config.from_environment(self.env))
+        rec.note_subagent({"parent_session_id": "p", "child_session_id": "c"})
+        rec.record("pre_api_request", {"session_id": "c", "api_request_id": "r"})
+        self.assertNotIn("c", rec._pending_links)
+        for i in range(rec_mod.MAX_PENDING_LINKS + 10):
+            rec.note_subagent({"parent_session_id": "p", "child_session_id": f"c{i}"})
+        self.assertEqual(len(rec._pending_links), rec_mod.MAX_PENDING_LINKS)
+        self.assertNotIn("c0", rec._pending_links)
+
+    def test_broken_recorder_on_subagent_start_never_reaches_hermes(self):
+        mod = FH.load_plugin(S.PLUGIN)
+        rec_mod = S.recorder_module(mod)
+        rec = rec_mod.Recorder(rec_mod.Config.from_environment(self.env))
+
+        def boom(*a, **k):
+            raise RuntimeError("forced plugin failure")
+        rec.note_subagent = boom
+        mod._recorder = rec
+        host = FH.FakeHermes()
+        host.load(mod)
+        self.assertTrue(host.run_real_subagent_session()["turn_completed"])
+        self.assertEqual((host.callback_errors, host.blocked_tools, host.returns), ([], [], []))
+        # Records still written, just without the link.
+        self.assertTrue(all("parentSessionId" not in r["hermes"] for r in read_records(self.log)))
+
+    def test_verify_reports_links_and_missing_parent(self):
+        self.run_real()
+        v = self.verify()
+        self.assertEqual((v["verdict"], v["errors"], v["warnings"]), ("pass", [], []))
+        self.assertEqual([(l["parent"], l["child"]) for l in v["links"]],
+                         [("sess-main", "sess-child"), ("sess-child", "sess-grandchild")])
+        with open(self.log, "rb") as f:
+            data = f.read()
+        no_parent = S.join([l for l in S.lines_of(data) if b'"scope":"sess-main"' not in l])
+        v = self.verify(no_parent)
+        self.assertEqual(v["verdict"], "pass")
+        self.assertEqual([(w["kind"], w["line"]) for w in v["warnings"]], [("missing-parent-session", 1)])
+        self.assertEqual(len(v["links"]), 2)
+
+    def test_chain_resumes_after_restart_without_relinking(self):
+        self.run_real()
+        n = len(read_records(self.log))
+        _h, rec, *_ = S.run_fake_session(self.env, real_subagents=True)
+        recs = read_records(self.log)
+        self.assertEqual(len(recs), 2 * n)
+        # Second run: chains continue (seq > 0), so no record gains a parent link.
+        self.assertTrue(all("parentSessionId" not in r["hermes"] for r in recs[n:]))
+        self.assertEqual(self.verify()["verdict"], "pass")
 
 
 class FailureIsolationTests(Base):

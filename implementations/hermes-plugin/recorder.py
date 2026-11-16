@@ -15,6 +15,12 @@ Each Hermes hook event becomes exactly one ATP node (draft-bates-atp §8):
               it is not already the previous record) -- [] for a session's first record
   profile    PROFILE_ID (harness fields below are profile-defined, §20.3/§20.4)
   hermes     allowlisted correlation/metadata fields; seq = position in session
+
+Subagents (slice 2): Hermes v0.23.1 passes no parent_session_id to the five hooks above, but
+fires ``subagent_start`` (tools/delegate_tool.py) before a child agent runs, with
+parent_session_id / child_session_id. That hook writes NO record; it only remembers the link,
+which is added to the child session's FIRST record (seq 0) as hermes.parentSessionId (plus
+parentTurnId / parentSubagentId when present). Fields the hook event itself carries win.
 """
 
 from __future__ import annotations
@@ -54,6 +60,14 @@ FAMILY = {
     "pre_api_request": "api", "post_api_request": "api", "api_request_error": "api",
     "pre_tool_call": "tool", "post_tool_call": "tool",
 }
+
+# subagent_start kwargs copied onto the child session's first record.
+SUBAGENT_LINK_FIELDS = (
+    ("parent_session_id", "parentSessionId"),
+    ("parent_turn_id", "parentTurnId"),
+    ("parent_subagent_id", "parentSubagentId"),
+)
+MAX_PENDING_LINKS = 4096
 
 # kwarg -> (record field, kind). Anything not listed here is never written.
 ALLOWLIST = {
@@ -287,6 +301,9 @@ class Recorder:
         self._key_id: Optional[str] = None
         self._sessions: Dict[str, dict] = {}
         self._requests: Dict[tuple, dict] = {}
+        # child session_id -> {parentSessionId, ...}, filled by subagent_start, consumed by the
+        # child's first record. Insertion-ordered and bounded (oldest dropped).
+        self._pending_links: Dict[str, Dict[str, str]] = {}
         self._indexed = False
 
     @classmethod
@@ -438,6 +455,8 @@ class Recorder:
             if u:
                 ext["usage"] = u
         if seq == 0:
+            for k, v in self._pending_links.get(scope, {}).items():
+                ext.setdefault(k, v)
             ext["hermesVersion"] = self.hermes_version()
             if self._hermes_commit:
                 ext["hermesCommit"] = self._hermes_commit[:64]
@@ -505,6 +524,25 @@ class Recorder:
         node = atp.create_node(fields, self._seed)
         return node, scope, family, corr, seq
 
+    def note_subagent(self, kw: Dict[str, Any]) -> Optional[Dict[str, str]]:
+        """subagent_start: remember child_session_id -> parent link. No I/O, no record."""
+        child = kw.get("child_session_id")
+        parent = kw.get("parent_session_id")
+        if not isinstance(child, str) or not child or not isinstance(parent, str) or not parent:
+            return None
+        link: Dict[str, str] = {}
+        for src, dst in SUBAGENT_LINK_FIELDS:
+            v = kw.get(src)
+            if isinstance(v, str) and v:
+                link[dst] = _clean_str(v)[:MAX_STR]
+        scope = _clean_str(child)
+        with self._lock:
+            self._pending_links.pop(scope, None)
+            self._pending_links[scope] = link
+            while len(self._pending_links) > MAX_PENDING_LINKS:
+                self._pending_links.pop(next(iter(self._pending_links)))
+        return link
+
     def record(self, event: str, kw: Dict[str, Any]) -> Optional[dict]:
         if event not in FAMILY:
             return None
@@ -515,6 +553,8 @@ class Recorder:
             line = json.dumps(node, ensure_ascii=False, separators=(",", ":")) + "\n"
             self._append(line.encode("utf-8"))
             self._sessions[scope] = {"id": node["nodeId"], "seq": seq}
+            if seq == 0:
+                self._pending_links.pop(scope, None)
             if corr is not None:
                 if event.startswith("pre_"):
                     self._requests[(scope, family, corr)] = {
