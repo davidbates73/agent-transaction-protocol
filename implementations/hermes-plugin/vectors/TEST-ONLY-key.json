@@ -1,0 +1,5 @@
+{
+  "warning": "TEST ONLY - public test vector key. NEVER use for real records; the recorder never defaults to it.",
+  "alg": "Ed25519",
+  "seedHex": "b527405363354b900c268340adcf70286bbb057af9646116666d7422f2cb9d0f"
+}

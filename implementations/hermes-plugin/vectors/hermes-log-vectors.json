@@ -1,0 +1,352 @@
+{
+  "description": "ATP Hermes recorder log vectors (slice 1). Each case: verify <log> --pub <pub> --json must print exactly `expected` (as JSON) and exit 0 for pass, 2 for fail.",
+  "cases": [
+    {
+      "id": "valid",
+      "description": "Unmodified scripted session (API, tool, subagent, API error + retry)",
+      "log": "cases/valid.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "pass",
+        "records": 16,
+        "sessions": 2,
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "unmatched-pre",
+      "description": "Scripted session plus a session whose pre_tool_call never got a post (crash): pass with WARNING",
+      "log": "cases/unmatched-pre.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "pass",
+        "records": 19,
+        "sessions": 3,
+        "errors": [],
+        "warnings": [
+          {
+            "line": 19,
+            "kind": "unmatched-request",
+            "reason": "session sess-crash: pre_tool_call tool_call_id call-1 has no matching post_tool_call"
+          }
+        ]
+      }
+    },
+    {
+      "id": "edit-one-byte",
+      "description": "One hex digit of line 3's inputHash changed",
+      "log": "cases/edit-one-byte.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 16,
+        "sessions": 2,
+        "errors": [
+          {
+            "line": 3,
+            "kind": "tampered",
+            "reason": "nodeId does not match record content"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "id": "delete-line",
+      "description": "Line 4 (post_tool_call call-1) deleted",
+      "log": "cases/delete-line.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 15,
+        "sessions": 2,
+        "errors": [
+          {
+            "line": 4,
+            "kind": "missing",
+            "reason": "session sess-main: expected seq 3, found 4 (1 record(s) missing)"
+          }
+        ],
+        "warnings": [
+          {
+            "line": 3,
+            "kind": "unmatched-request",
+            "reason": "session sess-main: pre_tool_call tool_call_id call-1 has no matching post_tool_call"
+          }
+        ]
+      }
+    },
+    {
+      "id": "swap-lines",
+      "description": "Lines 13 and 14 (same session) swapped",
+      "log": "cases/swap-lines.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 16,
+        "sessions": 2,
+        "errors": [
+          {
+            "line": 13,
+            "kind": "out-of-order",
+            "reason": "session sess-main: expected seq 6, found 7; seq 6 appears later in the log"
+          },
+          {
+            "line": 14,
+            "kind": "out-of-order",
+            "reason": "session sess-main: seq 6 is not after seq 7"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "id": "swap-across-sessions",
+      "description": "Lines 11 and 12 (different sessions) swapped: per-session order intact, so pass",
+      "log": "cases/swap-across-sessions.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "pass",
+        "records": 16,
+        "sessions": 2,
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "duplicate-line",
+      "description": "Line 6 repeated as line 7",
+      "log": "cases/duplicate-line.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 17,
+        "sessions": 2,
+        "errors": [
+          {
+            "line": 7,
+            "kind": "out-of-order",
+            "reason": "session sess-child: seq 0 is not after seq 0"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "id": "truncate-tail",
+      "description": "Last line removed: undetectable by the chain alone, surfaces as an unmatched-request WARNING",
+      "log": "cases/truncate-tail.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "pass",
+        "records": 15,
+        "sessions": 2,
+        "errors": [],
+        "warnings": [
+          {
+            "line": 15,
+            "kind": "unmatched-request",
+            "reason": "session sess-main: pre_api_request api_request_id req-3 has no matching post_api_request or api_request_error"
+          }
+        ]
+      }
+    },
+    {
+      "id": "blank-line",
+      "description": "Blank line inserted before line 5",
+      "log": "cases/blank-line.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 17,
+        "sessions": 2,
+        "errors": [
+          {
+            "line": 5,
+            "kind": "tampered",
+            "reason": "blank line"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "id": "garbage-line",
+      "description": "Non-JSON line inserted before line 5",
+      "log": "cases/garbage-line.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 17,
+        "sessions": 2,
+        "errors": [
+          {
+            "line": 5,
+            "kind": "tampered",
+            "reason": "invalid JSON"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "id": "wrong-key",
+      "description": "Valid log checked against a different public key",
+      "log": "cases/wrong-key.jsonl",
+      "pub": "wrong-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 16,
+        "sessions": 2,
+        "errors": [
+          {
+            "line": 1,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 2,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 3,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 4,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 5,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 6,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 7,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 8,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 9,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 10,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 11,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 12,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 13,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 14,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 15,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          },
+          {
+            "line": 16,
+            "kind": "tampered",
+            "reason": "signature does not verify with the supplied public key"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "id": "empty-log",
+      "description": "Empty file (0 records): a failure, never a pass",
+      "log": "cases/empty-log.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 0,
+        "sessions": 0,
+        "errors": [
+          {
+            "line": 0,
+            "kind": "empty-log",
+            "reason": "log contains no records"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "id": "truncate-crash-tail",
+      "description": "Crash session with its final unmatched pre_tool_call deleted: KNOWN LIMITATION, passes with no warning (tail truncation is invisible to the chain)",
+      "log": "cases/truncate-crash-tail.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "pass",
+        "records": 18,
+        "sessions": 3,
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "bodies-valid",
+      "description": "Scripted session recorded with log_bodies on (includes a redacted fake key): every stored body re-hashes to its hash",
+      "log": "cases/bodies-valid.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "pass",
+        "records": 16,
+        "sessions": 2,
+        "errors": [],
+        "warnings": []
+      }
+    },
+    {
+      "id": "body-mismatch",
+      "description": "log_bodies session; the last record's outputBody changed and the record re-signed with the TEST-ONLY key: authentic but body != outputHash",
+      "log": "cases/body-mismatch.jsonl",
+      "pub": "TEST-ONLY-key.pub",
+      "expected": {
+        "verdict": "fail",
+        "records": 16,
+        "sessions": 2,
+        "errors": [
+          {
+            "line": 16,
+            "kind": "body-mismatch",
+            "reason": "hermes.outputBody does not match action.outputHash"
+          }
+        ],
+        "warnings": []
+      }
+    }
+  ]
+}

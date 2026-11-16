@@ -3,6 +3,7 @@
 //
 //   atp verify <bundle.json> --keys <keys.json> [--mode full|tip|bounded|redacted]
 //              [--depth N] [--since <RFC3339>] [--target <nodeId>] [--strict-profiles]
+//   atp verify <records.jsonl> --pub <key.pub> [--json]   append-only record log (Hermes recorder)
 //   atp nodeid <node.json>          print canonical form and nodeId
 //   atp keygen                      print a fresh Ed25519 seed + public key
 //
@@ -12,17 +13,30 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { validate, keyResolver, indexNodes, tips, canonicalize, nodeContent, computeNodeId, keyPairFromSeed } from '../src/atp.js';
+import { verifyLog, loadPublicKey, formatJson, formatText } from '../src/atp-log.js';
 
 const [cmd, file, ...rest] = process.argv.slice(2);
 const flag = (name) => { const i = rest.indexOf(`--${name}`); return i >= 0 ? (rest[i + 1] ?? true) : undefined; };
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 
 function usage(code = 1) {
-  console.error('usage:\n  atp verify <bundle.json> --keys <keys.json> [--mode full|tip|bounded|redacted] [--depth N] [--since T] [--target ID] [--strict-profiles]\n  atp nodeid <node.json>\n  atp keygen');
+  console.error('usage:\n  atp verify <bundle.json> --keys <keys.json> [--mode full|tip|bounded|redacted] [--depth N] [--since T] [--target ID] [--strict-profiles]\n  atp verify <records.jsonl> --pub <key.pub> [--json]\n  atp nodeid <node.json>\n  atp keygen');
   process.exit(code);
 }
 
-if (cmd === 'verify') {
+if (cmd === 'verify' && file && typeof flag('pub') === 'string') {
+  let pub, data;
+  try {
+    pub = loadPublicKey(fs.readFileSync(flag('pub'), 'utf8'));
+    data = fs.readFileSync(file);
+  } catch (e) {
+    console.error(`error: ${e.message}`);
+    process.exit(1);
+  }
+  const result = verifyLog(data, pub);
+  console.log(rest.includes('--json') ? formatJson(result) : formatText(result));
+  process.exit(result.verdict === 'pass' ? 0 : 2);
+} else if (cmd === 'verify') {
   if (!file || !flag('keys')) usage();
   const bundle = readJson(file);
   const nodes = Array.isArray(bundle) ? bundle : bundle.nodes;
