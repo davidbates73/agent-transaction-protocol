@@ -3,7 +3,7 @@
 ## Unreleased
 
 - Added the Hermes Agent ATP recorder plugin, slice 1 (`implementations/hermes-plugin/`), tested with Hermes v0.23.1
-- Added `verify <records.jsonl> --pub <key.pub> [--json]` to both CLIs, with identical verdicts for tampered, missing and out-of-order records
+- Added `verify <records.jsonl> --pub <key.pub> [--json]` to both CLIs, with identical verdicts for tampered, missing and out-of-order records, stored bodies that don't match their hash, and empty logs (a failure)
 - Added record-log test vectors (`implementations/hermes-plugin/vectors/`)
 - Added zero-dependency Node.js and Python reference implementations (`implementations/`)
 - Added machine-readable vectors (`vectors/atp-core-test-vectors.json`): published -00 plus proposed -01 additions

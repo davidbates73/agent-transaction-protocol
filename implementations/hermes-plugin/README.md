@@ -103,6 +103,14 @@ reported with its 1-based line number:
 * `missing`: a gap in `hermes.seq`, for example after a deleted line.
 * `out-of-order`: a seq that appears too early, or not after the previous one (swapped or
   duplicated lines).
+* `body-mismatch`: a stored `hermes.inputBody` / `hermes.outputBody` does not re-hash to
+  the record's `action.inputHash` / `action.outputHash` (as UTF-8 if it is a string, else
+  JCS), or its byte length differs from `hermes.inputLength` / `hermes.outputLength`. Only
+  checked on records whose signature verifies; such a record is authentic but internally
+  inconsistent, which points at a recorder bug or at someone holding the signing key.
+* `empty-log` (line 0): the log has no records. An empty file is a **failure** (exit 2),
+  never a pass, since "nothing to check" must not read as "verified". A file holding only
+  a newline is one blank line, so it is reported as `tampered` instead.
 * `WARNING unmatched-request`: a `pre_*` with no matching post or error (same session and
   `api_request_id` / `tool_call_id`). This is a warning, not a failure.
 
@@ -112,11 +120,22 @@ reported with its 1-based line number:
   "warnings": [] }
 ```
 
-Limitations: order is checked within a session, not across sessions (ATP does not
-require a global order, §7). Removing the last records of a session can't be detected
-from the chain alone (it usually shows up as an unmatched-request warning). Detecting
-that needs external anchoring such as a transparency log (§14.12), which is out of scope
-for slice 1. The default `hermes-atp-recorder.local` issuer is self-asserted.
+Limitations:
+
+* **Tail truncation is not detectable from the log alone (known limitation).** A PASS
+  means every record present is authentic and correctly chained; it does not mean no
+  records were removed from the **end** of a session. Each record only points backwards,
+  so deleting a session's last records leaves a valid, shorter chain. That shows up only
+  when the deletion orphans a request (an `unmatched-request` warning). When the deleted
+  tail is itself an unmatched `pre_*` (a session that crashed mid-tool-call), there is no
+  warning at all: vector `truncate-crash-tail` passes on purpose and documents this.
+  Detecting it needs something outside the log that remembers the last record, for
+  example the last `nodeId` per session kept elsewhere or a transparency log (§14.12).
+  That is out of scope for slice 1; a recorder-written sidecar would not help, since anyone
+  who can truncate the log can also roll it back.
+* Order is checked within a session, not across sessions (ATP does not require a global
+  order, §7).
+* The default `hermes-atp-recorder.local` issuer is self-asserted.
 
 ## What is logged, and what isn't
 
@@ -126,21 +145,27 @@ toolName, parentSessionId, parentTurnId, parentSubagentId, conversationId, platf
 model, responseModel, provider, apiMode, baseUrl, status, statusCode, retryCount,
 maxRetries, retryable, reason, errorType, finishReason, messageCount, toolCount,
 durationMs, apiDurationMs, assistantToolCallCount, usage (token counts only),
-inputLength, outputLength, hermesVersion and hermesCommit (on a session's first record),
-requestNodeId, bodiesLogged, schemaMismatch`. Strings are capped at 256 characters.
+inputLength, outputLength, inputRedacted, outputRedacted, hermesVersion and hermesCommit
+(on a session's first record), requestNodeId, bodiesLogged, schemaMismatch`. Strings are capped at 256 characters.
 
 * **Never logged:** API keys, `Authorization` and other headers, cookies, raw
   `request_messages`, `conversation_history`, `user_message`, `system_prompt`,
   `assistant_message`, `error_message`. `base_url` is reduced to scheme, host and path,
   so credentials and query strings are removed.
 * **Bodies are off by default.** Prompts, responses, tool args and results are reduced to
-  `sha256:` plus a byte length. Before hashing, the payload is JSON-normalized and keys
-  that look sensitive (`authorization`, `api_key`, `token`, `password`, `headers`, …)
-  are replaced with `[REDACTED]`. Strings are hashed as UTF-8 and everything else as JCS.
-* With `log_bodies: true`, the redacted bodies are written as `hermes.inputBody` and
-  `hermes.outputBody`, with an extra pass that scrubs `Bearer …` and `sk-…`/`xai-…`
-  key patterns. Bodies can still contain personal or confidential data, so treat the log
-  accordingly. Even short hashes can be guessable (§15.1).
+  `sha256:` plus a byte length. Before hashing, the payload is JSON-normalized, keys that
+  look sensitive (`authorization`, `api_key`, `token`, `password`, `headers`, …) are
+  replaced with `[REDACTED]`, and credential-shaped text (`Bearer …`, `Basic …`,
+  `sk-…`/`xai-…`/`pk-…`/`rk-…` keys) inside any string is replaced with `[REDACTED]`.
+  Strings are hashed as UTF-8 and everything else as JCS.
+* **Hashes cover the redacted payload,** in every case, bodies on or off. So
+  `action.inputHash` / `outputHash` will not equal a hash of the raw provider payload
+  whenever something was redacted. Those records carry `hermes.inputRedacted: true` /
+  `hermes.outputRedacted: true`. Turning `log_bodies` on never changes a hash.
+* With `log_bodies: true`, exactly those redacted bytes are written as `hermes.inputBody`
+  and `hermes.outputBody`, so an auditor can recompute every hash from the log (`verify`
+  does this; see `body-mismatch`). Bodies can still contain personal or confidential
+  data, so treat the log accordingly. Even short hashes can be guessable (§15.1).
 
 ## Profile fields
 
@@ -162,8 +187,8 @@ python3 -m unittest discover -s implementations/hermes-plugin/tests -p "test_*.p
   with a retry, an errored tool and a crash session with no post. It also tries to leak a
   fake API key and an `Authorization` header.
 * `tests/test_cross_impl.py` runs Node and Python `verify --json` on the same valid and
-  tampered logs (edited byte, deleted line, swapped lines, …), checks the output is
-  byte-identical, and replays `vectors/`.
+  tampered logs (edited byte, deleted line, swapped lines, body/hash mismatches, empty
+  log, …), checks the output is byte-identical, and replays `vectors/`.
 * `tests/test_real_hermes.py` is opt-in and runs against a real Hermes install:
   `HERMES_REAL_PYTHON=/path/to/hermes/venv/bin/python python3 -m unittest discover -s implementations/hermes-plugin/tests -p test_real_hermes.py`.
   It loads the plugin through Hermes' own discovery, fires the API hooks through
@@ -199,6 +224,13 @@ Checked against Hermes **v0.23.1** source (`hermes_cli/plugins*.py`, `agent/turn
   the child `session_id`, but don't name their parent session. Linking them through
   `subagent_start` is planned for slice 2.
 * Version detection uses `hermes_cli.version_info.get_version_info()`. Package metadata
-  and `hermes_cli.__version__` both report a `0.0.0` placeholder on source installs.
+  reports a `0.0.0` placeholder on source installs. `hermes plugins validate` warns about
+  this import (catalog rule 9, "public surfaces only"). It stays because v0.23.1 has no
+  public way to read the Hermes version: nothing in `hermes_cli/data/plugin_api.json` or
+  on `ctx` exposes it, and running `hermes --version` would add about 1 s to the first
+  hook call. It is the plugin's only private import. It runs once, inside try/except, and
+  if it breaks on a later release the recorder falls back to package metadata, then
+  `"unknown"`; recording is never affected. (The unused `hermes_cli.__version__`
+  fallback was removed.)
 
 Out of scope for slice 1: Elastic exporter, Kibana, outbound webhooks, auxiliary-call hooks.
