@@ -155,6 +155,17 @@ Limitations:
   example the last `nodeId` per session kept elsewhere or a transparency log (§14.12).
   That is out of scope for slice 1; a recorder-written sidecar would not help, since anyone
   who can truncate the log can also roll it back.
+* **A subagent that never writes a record leaves no link and no warning (known
+  limitation, QA H2-F1).** The link from `subagent_start` is held in memory until the
+  child session's first record is written. If the child fails before its first API or
+  tool call, or `subagent_start` itself fails, nothing is recorded for the child, so
+  `verify` has nothing to report and doesn't warn. The parent's `delegate_task`
+  `pre_tool_call` / `post_tool_call` records still show that a delegation happened.
+* **Self-links and cycles verify without a warning (residual, QA H2-F1).** `verify` only
+  checks that a link's parent session has records in the log. A session whose first
+  record names itself as its parent, or two sessions that name each other (A ↔ B), pass
+  with no warning. The recorder can't produce either from real `subagent_start` events,
+  so this would take a buggy or deliberately signed record.
 * Order is checked within a session, not across sessions (ATP does not require a global
   order, §7).
 * The default `hermes-atp-recorder.local` issuer is self-asserted.
