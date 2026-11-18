@@ -1,9 +1,10 @@
-# ATP recorder for Hermes Agent (slice 1)
+# ATP recorder for Hermes Agent (slices 1–2)
 
 An **observe-only** [Hermes Agent](https://hermes-agent.nousresearch.com/) plugin that
 turns every main-loop provider API request / response / error and every tool call into
 one signed [ATP](../../working/draft-bates-atp-01.txt) record, appended to a local JSONL log.
-`verify` in both reference implementations checks the log.
+Subagent sessions are linked to the session that delegated them (slice 2). `verify` in
+both reference implementations checks the log.
 
 **Tested with Hermes Agent v0.23.1** (tag `v0.23.1`, commit `3b421578588243f920886e6fe79a6faa87ea026e`),
 observer schema `hermes.observer.v1`. See [Compatibility](#compatibility).
@@ -36,6 +37,7 @@ Remove it: `hermes plugins remove atp-recorder`.
 | `api_request_error` | `atp:failure` | sanitized `request` | structured `error` |
 | `pre_tool_call` | `atp:request` | `args` | (absent) |
 | `post_tool_call` | `atp:completion`, or `atp:failure` if `status` ≠ `ok` | `args` | `result` |
+| `subagent_start` | **no record**; links the child session's first record to its parent (below) | | |
 
 * **One record per hook event**; pre and post are separate records. A pre with no post
   is evidence of a crash or hang and is reported by `verify` as a WARNING.
@@ -44,6 +46,17 @@ Remove it: `hermes plugins remove atp-recorder`.
   record in that session and `hermes.seq` + 1. A completion also lists its request as a
   parent when the request is not already `parents[0]` (draft §16.2). Each subagent has its
   own session, so it starts its own chain.
+* **Subagent links (slice 2):** Hermes v0.23.1 doesn't pass `parent_session_id` to the
+  five recorded hooks. It does fire `subagent_start` from `delegate_task`
+  (`tools/delegate_tool.py`) before the child agent runs, with `parent_session_id`,
+  `parent_turn_id`, `parent_subagent_id` and `child_session_id`. The recorder remembers that
+  link (in memory, no I/O, bounded to 4096 pending children) and writes it into the
+  **child session's first record** (`hermes.seq: 0`) as `hermes.parentSessionId`, plus
+  `hermes.parentTurnId` and `hermes.parentSubagentId` when Hermes provides them. Later
+  child records and the parent's own records don't carry it. If a hook ever passes
+  `parent_session_id` directly (as the docs describe), that value wins. `child_goal`,
+  `child_role` and the other `subagent_start` arguments are never logged. Nested
+  delegation works the same way: a grandchild's first record names the child session.
 * **Observe only:** each callback is wrapped in `try/except` and always returns `None`.
   This matters most for `pre_tool_call`: in Hermes a callback that raises, times out or
   returns a directive **blocks or modifies the tool call** (fail-closed). The recorder
@@ -113,11 +126,20 @@ reported with its 1-based line number:
   a newline is one blank line, so it is reported as `tampered` instead.
 * `WARNING unmatched-request`: a `pre_*` with no matching post or error (same session and
   `api_request_id` / `tool_call_id`). This is a warning, not a failure.
+* `WARNING missing-parent-session`: a session's first record names a `parentSessionId`
+  with no records in this log (for example a child's log was split from its parent's, or
+  the parent's records were removed). This is a warning, not a failure.
+
+Every parent-to-child link is listed under `links`, one entry per child session, taken from
+that session's first record if its signature verifies (a tampered first record yields no
+link). In text output each link is a `LINK session <parent> -> session <child>` line.
+Warnings are listed in line order.
 
 ```json
 { "verdict": "fail", "records": 16, "sessions": 2,
   "errors": [ { "line": 13, "kind": "out-of-order", "reason": "session sess-main: expected seq 6, found 7; seq 6 appears later in the log" } ],
-  "warnings": [] }
+  "warnings": [],
+  "links": [ { "line": 6, "parent": "sess-main", "child": "sess-child" } ] }
 ```
 
 Limitations:
@@ -133,6 +155,17 @@ Limitations:
   example the last `nodeId` per session kept elsewhere or a transparency log (§14.12).
   That is out of scope for slice 1; a recorder-written sidecar would not help, since anyone
   who can truncate the log can also roll it back.
+* **A subagent that never writes a record leaves no link and no warning (known
+  limitation, QA H2-F1).** The link from `subagent_start` is held in memory until the
+  child session's first record is written. If the child fails before its first API or
+  tool call, or `subagent_start` itself fails, nothing is recorded for the child, so
+  `verify` has nothing to report and doesn't warn. The parent's `delegate_task`
+  `pre_tool_call` / `post_tool_call` records still show that a delegation happened.
+* **Self-links and cycles verify without a warning (residual, QA H2-F1).** `verify` only
+  checks that a link's parent session has records in the log. A session whose first
+  record names itself as its parent, or two sessions that name each other (A ↔ B), pass
+  with no warning. The recorder can't produce either from real `subagent_start` events,
+  so this would take a buggy or deliberately signed record.
 * Order is checked within a session, not across sessions (ATP does not require a global
   order, §7).
 * The default `hermes-atp-recorder.local` issuer is self-asserted.
@@ -146,7 +179,9 @@ model, responseModel, provider, apiMode, baseUrl, status, statusCode, retryCount
 maxRetries, retryable, reason, errorType, finishReason, messageCount, toolCount,
 durationMs, apiDurationMs, assistantToolCallCount, usage (token counts only),
 inputLength, outputLength, inputRedacted, outputRedacted, hermesVersion and hermesCommit
-(on a session's first record), requestNodeId, bodiesLogged, schemaMismatch`. Strings are capped at 256 characters.
+(on a session's first record), requestNodeId, bodiesLogged, schemaMismatch`.
+`parentSessionId`, `parentTurnId` and `parentSubagentId` come from the hook itself or, on a
+subagent's first record, from `subagent_start`. Strings are capped at 256 characters.
 
 * **Never logged:** API keys, `Authorization` and other headers, cookies, raw
   `request_messages`, `conversation_history`, `user_message`, `system_prompt`,
@@ -175,6 +210,22 @@ and they are covered by the nodeId and signature. The profile is not yet a publi
 specification: this README is its working definition. A generic ATP `validate()` will
 list these nodes under `profileUnresolved`, which is expected (§20.4 permissive mode).
 
+Slice 2 adds no new fields and keeps the profile at `0.1.0`. `hermes.parentSessionId`
+(with `parentTurnId` and `parentSubagentId`) was already a profile field in slice 1. Slice 2
+defines its meaning on a session's first record: "this session was delegated from session
+`parentSessionId`, during its turn `parentTurnId`". Slice 1 logs keep verifying unchanged;
+`verify` simply also lists the links they contain.
+
+`--json` output always has a `links` key, an empty list when there are none, even for
+slice 1 logs. The key is additive: verdicts, errors and warnings are unchanged, and
+consumers should ignore keys they don't know.
+
+**Backlog (not in slice 2):** a link names the parent *session*, not the parent's
+delegating record. Making it a full ATP lineage edge, where the child's first record
+lists the `delegate_task` record in `parents`, would change slice 1's rule that a
+session's first record has no parents, and it touches the spec, so it is deferred to a
+later slice.
+
 ## Tests
 
 ```sh
@@ -195,6 +246,12 @@ python3 -m unittest discover -s implementations/hermes-plugin/tests -p "test_*.p
   `hermes_cli.lifecycle.invoke_hook`, runs a real `read_file` through
   `model_tools.handle_function_call`, does it again with the recorder forced to fail
   (the tool must not be blocked), then verifies the log with both implementations.
+* `tests/real_hermes_subagent_check.py` (run by the same opt-in test; it needs a Hermes
+  **source** checkout) drives a real delegation with no LLM. A real `AIAgent` talks to
+  Hermes's own loopback fake provider (`tests/fakes/fake_llm_provider.py`), which asks for
+  `delegate_task`. Hermes's real delegation code then builds and runs a child agent and
+  fires the real `subagent_start`. The check confirms that the child's first record names
+  the parent session and turn, and that both CLIs report the link.
 
 ## Test vectors
 
@@ -220,9 +277,12 @@ Checked against Hermes **v0.23.1** source (`hermes_cli/plugins*.py`, `agent/turn
   `system_prompt` on `pre_api_request`; `middleware_trace` on tool hooks). They are not
   allowlisted, so they are never logged.
 * **None of the five hooks receives `parent_session_id` in v0.23.1.** It is only on
-  `pre_llm_call` and `subagent_*`. Subagent records therefore form their own chain under
-  the child `session_id`, but don't name their parent session. Linking them through
-  `subagent_start` is planned for slice 2.
+  `pre_llm_call` and `subagent_*`. Slice 2 therefore links through `subagent_start`
+  (`tools/delegate_tool.py`, fired before the child runs, on the delegating thread; not
+  bounded by `plugins.hook_callback_timeout`). Its `child_session_id` is the `session_id`
+  the child's own hooks carry. In v0.23.1 `delegate_task` runs children in the background
+  by default, so parent and child records interleave in the log; each chain stays intact.
+  A child's `task_id` is its subagent id (`sa-…`).
 * Version detection uses `hermes_cli.version_info.get_version_info()`. Package metadata
   reports a `0.0.0` placeholder on source installs. `hermes plugins validate` warns about
   this import (catalog rule 9, "public surfaces only"). It stays because v0.23.1 has no

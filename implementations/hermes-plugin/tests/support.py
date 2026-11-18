@@ -40,7 +40,7 @@ def recorder_module(plugin_mod):
     return importlib.import_module(plugin_mod.__name__ + ".recorder")
 
 
-def run_fake_session(env, *, clock=None, hermes_version=None, crash=False, secrets=True):
+def run_fake_session(env, *, clock=None, hermes_version=None, crash=False, secrets=True, real_subagents=False):
     """Load the plugin into a FakeHermes with a recorder built from env; run the scripted session."""
     mod = fake_hermes.load_plugin(PLUGIN)
     rec_mod = recorder_module(mod)
@@ -48,7 +48,8 @@ def run_fake_session(env, *, clock=None, hermes_version=None, crash=False, secre
     mod._recorder = rec
     host = fake_hermes.FakeHermes()
     host.load(mod)
-    out = host.run_scripted_session(secrets=secrets)
+    out = (host.run_real_subagent_session(secrets=secrets) if real_subagents
+           else host.run_scripted_session(secrets=secrets))
     if crash:
         host.run_crash_session()
     return host, rec, mod, out

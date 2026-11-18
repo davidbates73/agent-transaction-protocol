@@ -36,14 +36,15 @@ def build(outdir):
             json.dump(key_doc, f)
         os.chmod(key_path, 0o600)
 
-        def session(name, crash, bodies=False):
+        def session(name, crash, bodies=False, real_subagents=False):
             env = {"HERMES_ATP_HOME": work, "HERMES_ATP_KEY": key_path,
                    "HERMES_ATP_PUB": os.path.join(work, "TEST-ONLY-key.pub"),
                    "HERMES_ATP_LOG": os.path.join(work, name)}
             if bodies:
                 env["HERMES_ATP_LOG_BODIES"] = "true"
             _host, rec, _mod, _ = S.run_fake_session(env, clock=S.TickClock(), crash=crash,
-                                                    hermes_version=S.VECTOR_HERMES_VERSION)
+                                                    hermes_version=S.VECTOR_HERMES_VERSION,
+                                                    real_subagents=real_subagents)
             with open(os.path.join(work, name), "rb") as f:
                 return f.read(), rec.public_key
 
@@ -51,6 +52,20 @@ def build(outdir):
         crash, _ = session("crash.jsonl", crash=True)
         bodies, _ = session("bodies.jsonl", crash=False, bodies=True)
         nb = len(S.lines_of(bodies))
+
+        subs, _ = session("subagents.jsonl", crash=False, real_subagents=True)
+        sub_lines = S.lines_of(subs)
+        child0 = next(i for i, l in enumerate(sub_lines)
+                      if b'"scope":"sess-child"' in l and b'"seq":0,' in l)
+
+        def drop_scope(data, scope):
+            return S.join([l for l in S.lines_of(data) if b'"scope":"%s"' % scope.encode() not in l])
+
+        def retarget_parent(data, idx):
+            ls = S.lines_of(data)
+            ls[idx] = ls[idx].replace(b'"parentSessionId":"sess-main"', b'"parentSessionId":"sess-evil"', 1)
+            assert b"sess-evil" in ls[idx]
+            return S.join(ls)
 
         def alter_body(node):
             node["hermes"]["outputBody"] = {"altered": True}
@@ -73,6 +88,9 @@ def build(outdir):
             ("truncate-crash-tail", "Crash session with its final unmatched pre_tool_call deleted: KNOWN LIMITATION, passes with no warning (tail truncation is invisible to the chain)", S.delete_line(crash, len(S.lines_of(crash)) - 1), "test"),
             ("bodies-valid", "Scripted session recorded with log_bodies on (includes a redacted fake key): every stored body re-hashes to its hash", bodies, "test"),
             ("body-mismatch", "log_bodies session; the last record's outputBody changed and the record re-signed with the TEST-ONLY key: authentic but body != outputHash", S.resign_line(bodies, nb - 1, alter_body), "test"),
+            ("subagent-linked", "Slice 2: v0.23.1-shaped delegation parent -> child -> grandchild; links come from subagent_start onto each child's first record", subs, "test"),
+            ("subagent-missing-parent", "Slice 2: subagent log with every sess-main record removed: pass, links listed, WARNING missing-parent-session for sess-child", drop_scope(subs, "sess-main"), "test"),
+            ("subagent-link-tampered", "Slice 2: sess-child's parentSessionId edited (not re-signed): tampered, and the forged link is not reported", retarget_parent(subs, child0), "test"),
         ]
         pubs = {"test": pub, "wrong": wrong_pub}
         with open(os.path.join(outdir, "TEST-ONLY-key.json"), "w") as f:
@@ -83,7 +101,7 @@ def build(outdir):
                 f.write(base64.b64encode(raw).decode() + "\n")
         with open(os.path.join(outdir, "sample-log.jsonl"), "wb") as f:
             f.write(sample)
-        manifest = {"description": "ATP Hermes recorder log vectors (slice 1). Each case: verify <log> --pub <pub> --json must print exactly `expected` (as JSON) and exit 0 for pass, 2 for fail.",
+        manifest = {"description": "ATP Hermes recorder log vectors (slices 1-2; slice 2 added the additive `links` key and the subagent-* cases). Each case: verify <log> --pub <pub> --json must print exactly `expected` (as JSON) and exit 0 for pass, 2 for fail.",
                     "cases": []}
         for cid, desc, data, keylabel in cases:
             path = f"cases/{cid}.jsonl"

@@ -11,6 +11,10 @@ When a record stores hermes.inputBody / hermes.outputBody (log_bodies on), the b
 re-hash to action.inputHash / action.outputHash and match hermes.*Length ("body-mismatch").
 An empty log (no records) is a failure ("empty-log", line 0).
 
+Subagent links (slice 2): an intact first record (seq 0) carrying hermes.parentSessionId
+links that session to its parent; every link is listed in "links" (in line order). A link
+whose parent session has no record in the log is a WARNING ("missing-parent-session").
+
 Known limitation: deleting records from the END of a session (tail truncation) leaves a valid
 chain and cannot be detected from the log alone; it only shows up when it orphans a request
 (an "unmatched-request" warning). Anchor the last nodeId externally if that matters.
@@ -230,12 +234,30 @@ def verify_log(data: bytes, public_key: bytes) -> dict:
             warnings.append({"line": pos, "kind": "unmatched-request",
                              "reason": f"session {node['scope']}: {ev} {idname} {c} has no matching {PAIR_NAME[ev]}"})
 
+    # Parent -> child session links, from each session's intact first record.
+    links: List[dict] = []
+    linked = set()
+    for pos, node in good:
+        if _seq(node) != 0 or node["scope"] in linked:
+            continue
+        parent = _str_field(node, "parentSessionId")
+        if parent is None:
+            continue
+        child = node["scope"]
+        linked.add(child)
+        links.append({"line": pos, "parent": parent, "child": child})
+        if parent not in scopes:
+            warnings.append({"line": pos, "kind": "missing-parent-session",
+                             "reason": f"session {child}: parent session {parent} has no records in this log"})
+    warnings.sort(key=lambda w: w["line"])  # stable: same-line warnings keep their order
+
     return {
         "verdict": "pass" if not errors else "fail",
         "records": len(lines),
         "sessions": len(scopes),
         "errors": errors,
         "warnings": warnings,
+        "links": links,
     }
 
 
@@ -250,4 +272,6 @@ def format_text(result: dict) -> str:
         out.append(f"  line {e['line']}: {e['kind'].upper()}: {e['reason']}")
     for w in result["warnings"]:
         out.append(f"  line {w['line']}: WARNING {w['kind']}: {w['reason']}")
+    for l in result.get("links", []):
+        out.append(f"  line {l['line']}: LINK session {l['parent']} -> session {l['child']}")
     return "\n".join(out)
