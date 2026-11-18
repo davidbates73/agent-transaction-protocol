@@ -1,0 +1,327 @@
+{
+  "index_patterns": [
+    "hermes-atp-records-*"
+  ],
+  "priority": 200,
+  "_meta": {
+    "description": "Hermes ATP recorder records (hermes-atp-export). Managed by setup/setup.sh.",
+    "managed_by": "hermes-atp-elastic"
+  },
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.refresh_interval": "5s",
+      "index.mapping.total_fields.limit": 200
+    },
+    "mappings": {
+      "dynamic": false,
+      "_source": {
+        "enabled": true
+      },
+      "properties": {
+        "@timestamp": {
+          "type": "date"
+        },
+        "ingested_at": {
+          "type": "date"
+        },
+        "node_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "record_hash": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "parents": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "request_node_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "session_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "parent_session_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "parent_turn_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "parent_subagent_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "turn_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "task_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "conversation_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "event": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "schema": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "schema_mismatch": {
+          "type": "boolean"
+        },
+        "seq": {
+          "type": "long"
+        },
+        "is_session_start": {
+          "type": "boolean"
+        },
+        "action_type": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "action_subtype": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "input_hash": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "output_hash": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "profile": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "issuer_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "key_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "agent_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "agent_version": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "api_request_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "api_call_count": {
+          "type": "long"
+        },
+        "api_mode": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "tool_call_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "tool_name": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "model": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "response_model": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "provider": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "platform": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "base_url": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "status": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "status_code": {
+          "type": "long"
+        },
+        "error_type": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "finish_reason": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "reason": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "retry_count": {
+          "type": "long"
+        },
+        "max_retries": {
+          "type": "long"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "message_count": {
+          "type": "long"
+        },
+        "tool_count": {
+          "type": "long"
+        },
+        "assistant_tool_call_count": {
+          "type": "long"
+        },
+        "duration_ms": {
+          "type": "long"
+        },
+        "api_duration_ms": {
+          "type": "long"
+        },
+        "input_length": {
+          "type": "long"
+        },
+        "output_length": {
+          "type": "long"
+        },
+        "input_redacted": {
+          "type": "boolean"
+        },
+        "output_redacted": {
+          "type": "boolean"
+        },
+        "bodies_logged": {
+          "type": "boolean"
+        },
+        "hermes_version": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "hermes_commit": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
+        "tokens": {
+          "properties": {
+            "prompt": {
+              "type": "long"
+            },
+            "completion": {
+              "type": "long"
+            },
+            "total": {
+              "type": "long"
+            },
+            "input": {
+              "type": "long"
+            },
+            "output": {
+              "type": "long"
+            },
+            "reasoning": {
+              "type": "long"
+            },
+            "cached": {
+              "type": "long"
+            },
+            "cache_read": {
+              "type": "long"
+            },
+            "cache_write": {
+              "type": "long"
+            }
+          }
+        },
+        "verify": {
+          "properties": {
+            "status": {
+              "type": "keyword",
+              "ignore_above": 1024
+            },
+            "valid": {
+              "type": "boolean"
+            },
+            "authentic": {
+              "type": "boolean"
+            },
+            "verifier": {
+              "type": "keyword",
+              "ignore_above": 1024
+            },
+            "errors": {
+              "properties": {
+                "kind": {
+                  "type": "keyword",
+                  "ignore_above": 1024
+                },
+                "reason": {
+                  "type": "text"
+                }
+              }
+            }
+          }
+        },
+        "source": {
+          "properties": {
+            "path": {
+              "type": "keyword",
+              "ignore_above": 1024
+            },
+            "offset": {
+              "type": "long"
+            },
+            "line": {
+              "type": "long"
+            },
+            "bytes": {
+              "type": "long"
+            }
+          }
+        },
+        "exporter": {
+          "properties": {
+            "name": {
+              "type": "keyword",
+              "ignore_above": 1024
+            },
+            "version": {
+              "type": "keyword",
+              "ignore_above": 1024
+            }
+          }
+        },
+        "body": {
+          "type": "object",
+          "enabled": false
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "mode": "push",
+  "es_url": "https://<SOLEBAY_IP>:9200",
+  "ca_cert": "/etc/hermes-atp/es-ca.crt",
+  "username": "hermes_exporter",
+  "password_file": "/etc/hermes-atp/es-password",
+  "logs": ["/home/hermes/.hermes/atp/records.jsonl"],
+  "pub": "/home/hermes/.hermes/atp/key.pub",
+  "state_dir": "/var/lib/hermes-atp-export",
+  "ship_bodies": false
+}

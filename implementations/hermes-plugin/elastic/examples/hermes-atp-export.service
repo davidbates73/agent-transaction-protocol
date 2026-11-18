@@ -1,0 +1,57 @@
+# systemd unit: hermes-atp-export in PUSH mode (the default) on nuc-hermes.
+# Follows the recorder log and ships it to Elasticsearch on us-solebay over HTTPS (TCP 9200).
+#
+# Install (as root on nuc-hermes; adjust paths/user to your Hermes install):
+#   install -d -m 0755 /opt/hermes-atp && cp -r implementations/hermes-plugin /opt/hermes-atp/
+#   install -d -m 0750 -o root -g hermes /etc/hermes-atp
+#   install -m 0640 -o root -g hermes examples/export.push.json /etc/hermes-atp/export.json
+#   install -m 0640 -o root -g hermes <CA from us-solebay certs/ca/ca.crt> /etc/hermes-atp/es-ca.crt
+#   install -m 0640 -o root -g hermes /dev/null /etc/hermes-atp/es-password   # then write the
+#       hermes_exporter password into it with an editor (never on a command line)
+#   cp examples/hermes-atp-export.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now hermes-atp-export
+#   journalctl -u hermes-atp-export -f
+#
+# The exporter only READS the log; it runs as the Hermes user (to read ~/.hermes/atp) but with
+# the log mounted read-only, and its only write access is its own state directory.
+
+[Unit]
+Description=Hermes ATP exporter (records.jsonl -> Elasticsearch on us-solebay)
+Documentation=file:///opt/hermes-atp/hermes-plugin/elastic/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hermes
+Group=hermes
+ExecStart=/usr/bin/python3 /opt/hermes-atp/hermes-plugin/elastic/exporter/hermes_atp_export.py --config /etc/hermes-atp/export.json
+Restart=always
+RestartSec=10
+# Exit code 1 = config error, 3 = fatal (bad credentials / untrusted certificate): retrying
+# every 10 s is harmless, but check the journal.
+
+# Hardening: read-only view of the system and of the Hermes home; writable state dir only.
+StateDirectory=hermes-atp-export
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+MemoryMax=256M
+CPUQuota=25%
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
