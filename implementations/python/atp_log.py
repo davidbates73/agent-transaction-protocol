@@ -21,6 +21,10 @@ chain and cannot be detected from the log alone; it only shows up when it orphan
 
 The verdict format is shared byte-for-byte with implementations/node/src/atp-log.js;
 any change here MUST be mirrored there (the cross-implementation test diffs both).
+
+check_line() / chain_step() expose verify_log's per-record and per-session checks for
+incremental readers (the Elastic exporter); verify_log is built on them, so both agree.
+hermes-plugin/atp_log.py is a byte-identical vendored copy of this file.
 """
 
 from __future__ import annotations
@@ -113,6 +117,101 @@ def split_lines(data: bytes) -> List[str]:
     return lines
 
 
+def check_line(text: str, public_key: bytes, node=None, parsed: bool = False) -> dict:
+    """Integrity checks for ONE log line, independent of the rest of the log.
+
+    Returns {"node", "intact", "record_hash", "scope", "seq", "problems": [(kind, reason)]}.
+    intact: structurally valid, nodeId matches content, signature verifies with public_key.
+    record_hash: the recomputed content hash (== nodeId when intact), or None.
+    scope/seq: set only when the line can take part in a session chain (see chain_step).
+    Pass parsed=True with node=<dict or None> to reuse an earlier parse.
+    """
+    problems: List[tuple] = []
+    out = {"node": None, "intact": False, "record_hash": None, "scope": None, "seq": None, "problems": problems}
+    if _BLANK.match(text):
+        problems.append(("tampered", "blank line"))
+        return out
+    if not parsed:
+        try:
+            node = atp.parse_atp_json(text)
+        except Exception:
+            node = None
+        node = node if isinstance(node, dict) else None
+    if node is None:
+        problems.append(("tampered", "invalid JSON"))
+        return out
+    out["node"] = node
+    intact = True
+    if atp.structural_error(node) is not None:
+        problems.append(("tampered", "not a structurally valid ATP node"))
+        intact = False
+    claimed = node.get("nodeId")
+    if intact:
+        try:
+            rid = atp.compute_node_id(node)
+        except Exception:
+            rid = None
+        out["record_hash"] = rid
+        if not isinstance(claimed, str):
+            problems.append(("tampered", "nodeId missing"))
+            intact = False
+        elif rid != claimed:
+            problems.append(("tampered", "nodeId does not match record content"))
+            intact = False
+        elif not atp.verify_node_id(rid, node["signature"], public_key):
+            problems.append(("tampered", "signature does not verify with the supplied public key"))
+            intact = False
+    if intact:
+        for which in ("input", "output"):
+            problem = _body_problem(node, which)
+            if problem is not None:
+                problems.append(("body-mismatch", problem))
+    scope = node.get("scope")
+    q = _seq(node)
+    if not isinstance(scope, str) or q is None:
+        if intact:
+            problems.append(("tampered", "hermes.seq missing or not a non-negative integer"))
+    else:
+        out["scope"], out["seq"] = scope, q
+    out["intact"] = intact
+    return out
+
+
+def chain_step(state: Dict[str, dict], node: dict, appears_later=None) -> List[tuple]:
+    """Per-session lineage check for one record (scope + hermes.seq + parents[0]); updates state.
+
+    state maps scope -> {"id": claimed nodeId, "seq": int}. appears_later(scope, seq) -> bool
+    is the whole-log look-ahead used by verify_log to tell out-of-order from missing; an
+    incremental reader (no look-ahead) passes None and a gap is reported as missing.
+    """
+    problems: List[tuple] = []
+    scope = node["scope"]
+    q = _seq(node)
+    claimed = node.get("nodeId")
+    cid = claimed if isinstance(claimed, str) and _HEX64.fullmatch(claimed) else None
+    parents = node.get("parents") if isinstance(node.get("parents"), list) else []
+    prev = parents[0] if parents else None
+    st = state.get(scope)
+    expected = 0 if st is None else st["seq"] + 1
+    if q == expected:
+        if st is None:
+            if prev is not None:
+                problems.append(("tampered", "first record of session must not link to a previous record"))
+        elif prev != st["id"]:
+            problems.append(("tampered", "parent link does not match the previous record in session"))
+    elif q > expected:
+        if appears_later is not None and appears_later(scope, expected):
+            problems.append(("out-of-order", f"session {scope}: expected seq {expected}, found {q}; seq {expected} appears later in the log"))
+        else:
+            n = q - expected
+            problems.append(("missing", f"session {scope}: expected seq {expected}, found {q} ({n} record(s) missing)"))
+    else:
+        problems.append(("out-of-order", f"session {scope}: seq {q} is not after seq {st['seq']}"))
+    if st is None or q > st["seq"]:
+        state[scope] = {"id": cid, "seq": q}
+    return problems
+
+
 def verify_log(data: bytes, public_key: bytes) -> dict:
     lines = split_lines(data)
     errors: List[dict] = []
@@ -147,66 +246,17 @@ def verify_log(data: bytes, public_key: bytes) -> dict:
     scopes = set()
 
     for pos, (text, node) in enumerate(zip(lines, parsed), 1):
-        if _BLANK.match(text):
-            err(pos, "tampered", "blank line")
+        checked = check_line(text, public_key, node=node, parsed=True)
+        for kind, reason in checked["problems"]:
+            err(pos, kind, reason)
+        node = checked["node"]
+        if node is None or checked["scope"] is None:
             continue
-        if node is None:
-            err(pos, "tampered", "invalid JSON")
-            continue
-        intact = True
-        if atp.structural_error(node) is not None:
-            err(pos, "tampered", "not a structurally valid ATP node")
-            intact = False
-        claimed = node.get("nodeId")
-        if intact:
-            try:
-                rid = atp.compute_node_id(node)
-            except Exception:
-                rid = None
-            if not isinstance(claimed, str):
-                err(pos, "tampered", "nodeId missing")
-                intact = False
-            elif rid != claimed:
-                err(pos, "tampered", "nodeId does not match record content")
-                intact = False
-            elif not atp.verify_node_id(rid, node["signature"], public_key):
-                err(pos, "tampered", "signature does not verify with the supplied public key")
-                intact = False
-        if intact:
-            for which in ("input", "output"):
-                problem = _body_problem(node, which)
-                if problem is not None:
-                    err(pos, "body-mismatch", problem)
-        scope = node.get("scope")
-        q = _seq(node)
-        if not isinstance(scope, str) or q is None:
-            if intact:
-                err(pos, "tampered", "hermes.seq missing or not a non-negative integer")
-            continue
-        scopes.add(scope)
-        if intact:
+        scopes.add(checked["scope"])
+        if checked["intact"]:
             good.append((pos, node))
-        cid = claimed if isinstance(claimed, str) and _HEX64.fullmatch(claimed) else None
-        parents = node.get("parents") if isinstance(node.get("parents"), list) else []
-        prev = parents[0] if parents else None
-        st = state.get(scope)
-        expected = 0 if st is None else st["seq"] + 1
-        if q == expected:
-            if st is None:
-                if prev is not None:
-                    err(pos, "tampered", "first record of session must not link to a previous record")
-            elif prev != st["id"]:
-                err(pos, "tampered", "parent link does not match the previous record in session")
-        elif q > expected:
-            if appears_later(scope, expected, pos):
-                err(pos, "out-of-order", f"session {scope}: expected seq {expected}, found {q}; seq {expected} appears later in the log")
-            else:
-                n = q - expected
-                err(pos, "missing", f"session {scope}: expected seq {expected}, found {q} ({n} record(s) missing)")
-        else:
-            err(pos, "out-of-order", f"session {scope}: seq {q} is not after seq {st['seq']}")
-        if st is None or q > st["seq"]:
-            state[scope] = {"id": cid, "seq": q}
+        for kind, reason in chain_step(state, node, lambda scope, seq, _p=pos: appears_later(scope, seq, _p)):
+            err(pos, kind, reason)
 
     if not lines:
         err(0, "empty-log", "log contains no records")
