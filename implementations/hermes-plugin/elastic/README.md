@@ -64,7 +64,7 @@ The month comes from the record's own signed timestamp. Lines that can't be pars
   once, in order, without the whole-log look-ahead, so a reordered record may show as
   `missing` where `verify` says `out-of-order`. Whole-log warnings (`unmatched-request`,
   `missing-parent-session`) aren't computed. The authoritative verdict is still
-  `python3 implementations/python/atp_cli.py verify --log records.jsonl --pub key.pub`.
+  `python3 implementations/python/atp_cli.py verify records.jsonl --pub key.pub`.
   For the record, the ingest result matched `verify` line for line on every log vector (see
   the tests).
 * **Bodies are never shipped by default.** `body.input` / `body.output` are sent only when
