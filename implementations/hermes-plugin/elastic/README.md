@@ -136,7 +136,7 @@ Notes:
 * **Data:** it lives in the `esdata` volume. `docker compose down` keeps it;
   `docker compose down -v` deletes it.
 * **Retention:** there's no automatic retention. Indices are monthly, so delete old ones with
-  `DELETE /hermes-atp-records-2026.01` (ILM is available on Basic; see Backlog).
+  `DELETE /hermes-atp-records-2026.01` (ILM is available on Basic; retention is the next backlog item).
 * **Version:** `STACK_VERSION=9.5.6` in `.env` is the single pin for both images (compose
   requires it and has no fallback), so a bump is a one-line change. The saved objects
   carry Kibana 9.5 model versions; newer Kibana migrates them forward on import.
@@ -395,14 +395,15 @@ The equivalent without Docker in the path:
 followed by `iptables -A INPUT -p tcp --dport 9200 -j DROP`.
 
 These host rules are written to the documented Docker and ufw behaviour but haven't been run
-on us-solebay. Review them, then check that `nc -vz <SOLEBAY_IP> 9200` works from the NUC and
+on us-solebay. David reviews and applies them himself (see "Who applies these rules"), then checks that `nc -vz <SOLEBAY_IP> 9200` works from the NUC and
 fails from any other host.
 
 ### Who applies these rules
 
-**David should apply, or at least review, the OPNsense rule and the us-solebay host firewall
-himself.** Don't let the audited Hermes agent (Flynn) open or change its own egress, or touch
-the reporting host. The agent under audit shouldn't control its own audit path. It would
+**David reviews and applies these rules himself: the OPNsense pass rule, and the
+us-solebay host rules (the `DOCKER-USER` chain rules and the ufw/iptables rules).** The
+audited Hermes agent (Flynn) must not write, apply or change any of them. Don't let it open
+or change its own egress, or touch the reporting host. The agent under audit shouldn't control its own audit path. It would
 otherwise be able to widen its network access, or quietly break or redirect the flow that
 reports on it.
 
@@ -455,18 +456,27 @@ bash implementations/run-all.sh          # includes these suites
   * saved-object import, export and re-import;
   * the dashboard rendering in headless Chrome as `hermes_viewer`.
 
-## Backlog / limitations
+## Backlog (priority order)
+
+1. **Index retention: NEXT.** us-solebay is a shared host, so the indices must not grow
+   without bound. Add an ILM policy (available on Basic) with a delete phase on
+   `hermes-atp-records-*`, or a simple scheduled delete of monthly indices older than an
+   agreed age. Until then, indices are monthly and deleted by hand.
+2. **Scheduled verify.** A job on us-solebay that runs `atp_cli.py verify` over the shipped
+   logs and records the authoritative verdict next to the provisional ingest result.
+3. **Snapshots.** A snapshot repository and schedule (available on Basic) so losing `esdata`
+   doesn't lose the index.
+4. **Rotated files in copy mode.** Carry session chain state across separately copied
+   rotated files, so a session split across two files doesn't show a spurious chain error.
+
+## Limitations
 
 * **Ingest verify is provisional**, as described above. It has no look-ahead and no
   whole-log warnings. Tail truncation is undetectable from the log alone, as with `verify`.
-  A scheduled job that runs `verify` on us-solebay and records the verdict would close this.
+  Backlog item 2 closes this.
 * **In-place rewrites:** in push mode, a same-length rewrite of the *open* file is only
   noticed when the exporter reopens it (restart or rotation). Copy mode re-hashes on every
   run.
-* **No ILM or retention policy and no snapshots.** Both are available on Basic and easy to
-  add; for now indices are monthly and deleted by hand.
 * **Single node with 0 replicas:** no redundancy. Losing `esdata` loses the index, but the
   log on nuc-hermes stays the source of truth and can be re-shipped.
-* **The exporter's chain state is per file.** A session split across two separately shipped
-  files (for example, rotated logs copied separately) shows a spurious chain error at the
-  split.
+* **The exporter's chain state is per file** (backlog item 4).

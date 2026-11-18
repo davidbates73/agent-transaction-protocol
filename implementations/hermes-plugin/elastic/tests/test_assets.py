@@ -322,6 +322,22 @@ class DocsTests(unittest.TestCase):
                      "stateful", "Flynn"):
             self.assertIn(want, net)
 
+    def test_david_applies_the_rules_not_the_agent(self):
+        who = self.readme[self.readme.index("### Who applies these rules"):self.readme.index("## Tests")]
+        self.assertIn("David reviews and applies these rules himself", who)
+        for rule in ("OPNsense", "DOCKER-USER", "ufw"):
+            self.assertIn(rule, who)
+        self.assertIn("Flynn", who)
+        self.assertIn("must not write, apply or change", who)
+
+    def test_backlog_priority_order(self):
+        backlog = self.readme[self.readme.index("## Backlog (priority order)"):self.readme.index("## Limitations")]
+        items = re.findall(r"^(\d+)\. \*\*([^*]+)\*\*", backlog, re.M)
+        self.assertEqual([t.split(":")[0].rstrip(".") for _, t in items],
+                         ["Index retention", "Scheduled verify", "Snapshots", "Rotated files in copy mode"])
+        self.assertIn("NEXT", items[0][1])
+        self.assertIn("shared", backlog.split("\n2.")[0])
+
     def test_no_real_ip_addresses(self):
         for path in [os.path.join(ELASTIC, "README.md"), os.path.join(ELASTIC, ".env.example")] + \
                 glob.glob(os.path.join(ELASTIC, "examples", "*")):
