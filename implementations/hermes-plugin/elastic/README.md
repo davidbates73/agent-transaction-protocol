@@ -52,7 +52,8 @@ The month comes from the record's own signed timestamp. Lines that can't be pars
   * Hashes and lengths: input/output hashes and lengths.
   * Provenance: `node_id`, `parents`, `issuer_id`, `key_id`, `hermes_version`.
   * Source: `source.{path,offset,line}`.
-  * Verify: `verify.{status,valid,authentic,errors}`.
+  * Verify: `verify.{status,valid,authentic,errors}`, and `anomaly` (true exactly when the
+    document got an `anomaly-*` `_id`, i.e. `verify.valid` is false).
 * **Verification at ingest:** each line goes through the same checks as `atp_cli.py verify`,
   via the shared `atp_log.check_line` + `atp_log.chain_step`:
   * per-record checks: blank or invalid JSON, structure, nodeId, Ed25519 signature, body hash;
@@ -290,12 +291,12 @@ you trust `certs/ca/ca.crt`.
 | Panel | Shows |
 |---|---|
 | Sessions over time | Unique `session_id` per interval (subagent sessions count as sessions) |
-| Verify failures | Count of records with `verify.valid: false` |
+| Anomalies (verify failures) | Count of anomaly records (`anomaly: true`): everything that failed an ingest check and was stored under an `anomaly-*` `_id` |
 | Model calls by model | `post_api_request` count over time, split by `model` |
 | Model call latency (ms) | Median and p95 `api_duration_ms` of `post_api_request` |
 | Tool calls by name | `post_tool_call` count by `tool_name` |
 | Subagent links | Table of parent session → child session (each child's first record carries `parent_session_id`) |
-| Verify failures by kind and session | `verify.status` × `session_id` table |
+| Anomaly records by kind, reason, session and line | One row per anomaly: `verify.errors.kind` (tampered, missing, out-of-order, body-mismatch), `verify.errors.reason`, `session_id`, log file and line |
 
 The ndjson is generated: edit `kibana/build_saved_objects.py`, then run
 `python3 kibana/build_saved_objects.py`. A test fails if the committed file is stale. PNG/PDF

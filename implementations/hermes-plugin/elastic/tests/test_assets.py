@@ -279,8 +279,25 @@ class KibanaObjectsTests(unittest.TestCase):
     def test_required_panels(self):
         titles = " | ".join(o["attributes"]["title"].lower() for o in self.objs if o["type"] == "lens")
         for want in ("sessions over time", "model calls", "latency", "tool calls by name", "subagent links",
-                     "verify failures"):
+                     "verify failures", "anomalies", "anomaly records by kind, reason, session and line"):
             self.assertIn(want, titles)
+
+    def test_anomaly_panels(self):
+        by_id = {o["id"]: o for o in self.objs}
+        metric = by_id["hermes-atp-anomalies-count"]["attributes"]
+        table = by_id["hermes-atp-anomalies"]["attributes"]
+        self.assertEqual(metric["visualizationType"], "lnsMetric")
+        self.assertEqual(table["visualizationType"], "lnsDatatable")
+        for a in (metric, table):
+            self.assertEqual(a["state"]["query"]["query"], "anomaly : true")
+        cols = table["state"]["datasourceStates"]["formBased"]["layers"]["layer1"]["columns"]
+        self.assertEqual({c["sourceField"] for c in cols.values()},
+                         {"verify.errors.kind", "verify.errors.reason", "session_id", "source.path", "source.line",
+                          "___records___"})
+        self.assertTrue(all(c["params"]["missingBucket"] for c in cols.values() if c["operationType"] == "terms"),
+                        "unparseable lines (no session_id) must still get a row")
+        self.assertEqual(FIELDS["anomaly"]["type"], "boolean")
+        self.assertEqual(FIELDS["verify.errors.reason"]["type"], "keyword")
 
     def test_pinned_migration_versions(self):
         for o in self.objs:

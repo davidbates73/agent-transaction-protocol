@@ -648,6 +648,7 @@ class IncrementalVerifyTests(Base):
                     hx.Exporter(self.cfg(es_url=es.url, logs=[log_path], state_dir=os.path.join(tmp, "s")),
                                 sleep=lambda s: None).run()
                     docs = {d["source"]["line"]: d for d in es.docs.values()}
+                    es_docs = dict(es.docs)
                 finally:
                     es.__exit__()
                 data = slurp(path, "rb")
@@ -664,6 +665,9 @@ class IncrementalVerifyTests(Base):
                 for ln in bad:
                     self.assertEqual(norm(bad[ln]), norm(ref_lines[ln]), f"line {ln}")
                 self.assertEqual(len(docs), complete)
+                for (_idx, doc_id), d in es_docs.items():
+                    self.assertEqual(d["anomaly"], doc_id.startswith("anomaly-"))
+                    self.assertEqual(d["anomaly"], not d["verify"]["valid"], (path, doc_id))
 
 
 if __name__ == "__main__":

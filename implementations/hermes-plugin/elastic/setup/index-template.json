@@ -282,7 +282,8 @@
                   "ignore_above": 1024
                 },
                 "reason": {
-                  "type": "text"
+                  "type": "keyword",
+                  "ignore_above": 512
                 }
               }
             }
@@ -320,6 +321,9 @@
         "body": {
           "type": "object",
           "enabled": false
+        },
+        "anomaly": {
+          "type": "boolean"
         }
       }
     }

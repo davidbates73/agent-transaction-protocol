@@ -30,11 +30,11 @@ def date_histogram():
             "params": {"interval": "auto", "includeEmptyRows": True, "dropPartials": False}}
 
 
-def terms(field, label, order_col, size=10):
-    return {"label": label, "customLabel": True, "dataType": "string", "operationType": "terms",
+def terms(field, label, order_col, size=10, data_type="string", missing=False):
+    return {"label": label, "customLabel": True, "dataType": data_type, "operationType": "terms",
             "sourceField": field, "isBucketed": True, "scale": "ordinal",
             "params": {"size": size, "orderBy": {"type": "column", "columnId": order_col},
-                       "orderDirection": "desc", "otherBucket": True, "missingBucket": False,
+                       "orderDirection": "desc", "otherBucket": True, "missingBucket": missing,
                        "parentFormat": {"id": "terms"}}}
 
 
@@ -115,29 +115,35 @@ PANELS = [
          table(["parent", "child", "n"]),
          query="is_session_start : true and parent_session_id : *",
          description="First record of each subagent session carries hermes.parentSessionId."),
-    lens("hermes-atp-verify-failures-count", "Verify failures", "lnsMetric",
-         [("n", count("Records failing verification"))],
+    lens("hermes-atp-anomalies-count", "Anomalies (verify failures)", "lnsMetric",
+         [("n", count("Anomaly records"))],
          metric_vis("n"),
-         query="verify.valid : false",
-         description="Records whose ingest-time verification failed. Authoritative check: atp_cli.py verify."),
-    lens("hermes-atp-verify-failures", "Verify failures by kind and session", "lnsDatatable",
-         [("status", terms("verify.status", "Verify status", "n")),
-          ("session", terms("session_id", "Session", "n", size=50)),
+         query="anomaly : true",
+         description="Records that failed an ingest check (bad signature, nodeId/content mismatch, body "
+                     "mismatch, duplicate, gap, out of order, unparseable). They are stored under an anomaly-* "
+                     "_id, so they never replace a genuine record. Authoritative check: atp_cli.py verify."),
+    lens("hermes-atp-anomalies", "Anomaly records by kind, reason, session and line", "lnsDatatable",
+         [("kind", terms("verify.errors.kind", "Kind", "n", missing=True)),
+          ("reason", terms("verify.errors.reason", "Reason", "n", size=50, missing=True)),
+          ("session", terms("session_id", "Session", "n", size=50, missing=True)),
+          ("path", terms("source.path", "Log file", "n", size=20, missing=True)),
+          ("line", terms("source.line", "Line", "n", size=500, data_type="number", missing=True)),
           ("n", count("Records"))],
-         table(["status", "session", "n"]),
-         query="verify.valid : false",
-         description="tampered / missing / out-of-order / body-mismatch, per session."),
+         table(["kind", "reason", "session", "path", "line", "n"]),
+         query="anomaly : true",
+         description="One row per anomaly record: what failed, why, in which session, and where in the log. "
+                     "Unparseable lines have no session and show as (null)."),
 ]
 
 LAYOUT = [  # (x, y, w, h) on Kibana's 48-column grid
     (0, 0, 32, 12), (32, 0, 16, 12),
     (0, 12, 24, 14), (24, 12, 24, 14),
     (0, 26, 24, 15), (24, 26, 24, 15),
-    (0, 41, 48, 14),
+    (0, 41, 48, 18),
 ]
-ORDER = ["hermes-atp-sessions-over-time", "hermes-atp-verify-failures-count", "hermes-atp-model-calls",
+ORDER = ["hermes-atp-sessions-over-time", "hermes-atp-anomalies-count", "hermes-atp-model-calls",
          "hermes-atp-model-latency", "hermes-atp-tool-calls", "hermes-atp-subagent-links",
-         "hermes-atp-verify-failures"]
+         "hermes-atp-anomalies"]
 
 
 def build():
@@ -157,7 +163,7 @@ def build():
         "attributes": {
             "title": "Hermes ATP overview",
             "description": "Hermes ATP recorder: sessions, model calls and latency, tool calls, subagent links, "
-                           "verify failures. Ingest-time verify is provisional; run atp_cli.py verify for the verdict.",
+                           "anomalies (verify failures). Ingest-time verify is provisional; run atp_cli.py verify for the verdict.",
             "panelsJSON": json.dumps(panels, separators=(",", ":")),
             "optionsJSON": json.dumps({"useMargins": True, "syncColors": False, "syncCursor": True,
                                        "syncTooltips": False, "hidePanelTitles": False}, separators=(",", ":")),

@@ -269,6 +269,7 @@ def build_document(raw: bytes, checked: dict, chain_problems: List[tuple], *, in
         doc_id = "anomaly-" + hashlib.sha256(prefix_sha256.encode("ascii") + b"\n" + raw).hexdigest()
     doc: Dict[str, Any] = {
         "record_hash": record_hash,
+        "anomaly": doc_id.startswith("anomaly-"),  # failed a check: keyed apart from genuine records
         "verify": {
             "status": problems[0][0] if problems else "valid",
             "valid": not problems,
