@@ -200,6 +200,17 @@ class ComposeTests(unittest.TestCase):
             self.assertEqual(documented[secret], "", f"{secret} must be blank in .env.example")
             self.assertIn("${%s:?" % secret, self.compose, f"{secret} must be required")
 
+    def test_single_stack_version_pin(self):
+        images = re.findall(r"^\s*(?:x-es-image: &es-image|image:)\s*(.+?)\s*$", self.compose, re.M)
+        images = [i for i in images if not i.startswith("*")]
+        self.assertEqual(sorted(i.split(":", 1)[0] for i in images),
+                         ["docker.elastic.co/elasticsearch/elasticsearch", "docker.elastic.co/kibana/kibana"])
+        for img in images:
+            self.assertTrue(img.endswith(":${STACK_VERSION:?set STACK_VERSION in .env}"), img)
+        self.assertEqual(self.compose.count("image: *es-image"), 2, "setup and es01 share the ES image anchor")
+        self.assertNotIn("9.5.6", self.compose, "the version lives only in .env")
+        self.assertEqual(re.findall(r"^STACK_VERSION=(.*)$", self.env_example, re.M), ["9.5.6"])
+
     def test_ports(self):
         self.assertIn('"${ES_BIND_ADDR:?set ES_BIND_ADDR in .env}:9200:9200"', self.compose)
         self.assertIn('"${KIBANA_BIND_ADDR:-127.0.0.1}:5601:5601"', self.compose)

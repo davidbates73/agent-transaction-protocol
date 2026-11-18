@@ -136,7 +136,8 @@ Notes:
   `docker compose down -v` deletes it.
 * **Retention:** there's no automatic retention. Indices are monthly, so delete old ones with
   `DELETE /hermes-atp-records-2026.01` (ILM is available on Basic; see Backlog).
-* **Version:** `STACK_VERSION` (default 9.5.6) pins ES and Kibana together. The saved objects
+* **Version:** `STACK_VERSION=9.5.6` in `.env` is the single pin for both images (compose
+  requires it and has no fallback), so a bump is a one-line change. The saved objects
   carry Kibana 9.5 model versions; newer Kibana migrates them forward on import.
 
 ## Exporter
