@@ -1,0 +1,14 @@
+{
+  "description": "Hermes ATP exporter: append-only writes to the hermes-atp-records-* indices. No reads, updates, deletes or cluster access.",
+  "cluster": [],
+  "indices": [
+    {
+      "names": ["hermes-atp-records-*"],
+      "privileges": ["create_doc", "auto_configure"],
+      "allow_restricted_indices": false
+    }
+  ],
+  "applications": [],
+  "run_as": [],
+  "metadata": {"managed_by": "hermes-atp-elastic"}
+}

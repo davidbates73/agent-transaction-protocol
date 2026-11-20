@@ -1,0 +1,22 @@
+# TEST-ONLY override: for a Docker host without bridge networking (e.g. dockerd started with
+# --bridge=none --iptables=false). Puts every service on the host network, bound to 127.0.0.1,
+# and maps the compose service names to localhost. Not for us-solebay.
+#   docker compose -f docker-compose.yml -f tests/compose.hostnet.yml up -d
+services:
+  setup:
+    network_mode: host
+    extra_hosts: ["es01:127.0.0.1", "kibana:127.0.0.1"]
+  es01:
+    network_mode: host
+    ports: !reset []
+    extra_hosts: ["es01:127.0.0.1", "kibana:127.0.0.1"]
+    environment:
+      network.host: 127.0.0.1
+      http.port: "9200"
+      transport.port: "9300"
+  kibana:
+    network_mode: host
+    ports: !reset []
+    extra_hosts: ["es01:127.0.0.1", "kibana:127.0.0.1"]
+    environment:
+      SERVER_HOST: 127.0.0.1

@@ -158,8 +158,9 @@ Limitations:
 * **A subagent that never writes a record leaves no link and no warning (known
   limitation, QA H2-F1).** The link from `subagent_start` is held in memory until the
   child session's first record is written. If the child fails before its first API or
-  tool call, or `subagent_start` itself fails, nothing is recorded for the child, so
-  `verify` has nothing to report and doesn't warn. The parent's `delegate_task`
+  tool call, nothing is recorded for the child, so `verify` has nothing to report and
+  doesn't warn. If `subagent_start` itself fails, the child's records (if any) carry no
+  parent, so `verify` has no link to report and doesn't warn. The parent's `delegate_task`
   `pre_tool_call` / `post_tool_call` records still show that a delegation happened.
 * **Self-links and cycles verify without a warning (residual, QA H2-F1).** `verify` only
   checks that a link's parent session has records in the log. A session whose first
@@ -169,6 +170,22 @@ Limitations:
 * Order is checked within a session, not across sessions (ATP does not require a global
   order, §7).
 * The default `hermes-atp-recorder.local` issuer is self-asserted.
+
+## Reporting (Elasticsearch + Kibana)
+
+[`elastic/`](elastic/README.md) contains the reporting side:
+* a single-node Elasticsearch + Kibana stack (free Basic license, TLS, write-only exporter
+  role, read-only viewer role) for us-solebay;
+* a stdlib exporter, `elastic/exporter/hermes_atp_export.py`. It runs on nuc-hermes as a
+  systemd service, only reads `records.jsonl`, verifies each record with the same code as
+  `verify`, and pushes it over HTTPS. Re-sending never creates duplicates;
+* an importable dashboard;
+* the OPNsense and host-firewall rules for the one flow it needs (nuc-hermes → us-solebay,
+  TCP 9200).
+
+The exporter uses the vendored `atp_log.py` here, a byte-identical copy of
+`implementations/python/atp_log.py`, kept identical by a test. The recorder itself doesn't
+use it.
 
 ## What is logged, and what isn't
 

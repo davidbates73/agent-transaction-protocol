@@ -1,0 +1,11 @@
+# Runs the copy-mode exporter every 5 minutes on us-solebay (after your rsync/scp job).
+[Unit]
+Description=Ship copied Hermes ATP logs to Elasticsearch every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

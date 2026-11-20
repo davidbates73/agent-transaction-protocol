@@ -1,0 +1,21 @@
+# systemd unit: hermes-atp-export in COPY mode (fallback) on us-solebay.
+# Processes log files copied from nuc-hermes (rsync/scp) to EOF once, then exits; run it from
+# hermes-atp-export-copy.timer. Idempotent for re-copied, appended, replaced or truncated
+# files. Copy the key.pub out-of-band once (it is public, but it must be the right one).
+[Unit]
+Description=Hermes ATP exporter, copy mode (copied records.jsonl -> local Elasticsearch)
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=hermes-export
+ExecStart=/usr/bin/python3 /opt/hermes-atp/hermes-plugin/elastic/exporter/hermes_atp_export.py --config /etc/hermes-atp/export.json --once
+StateDirectory=hermes-atp-export
+StateDirectoryMode=0700
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/srv/hermes-atp
+PrivateTmp=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+MemoryMax=256M

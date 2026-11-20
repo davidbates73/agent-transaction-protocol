@@ -1,0 +1,18 @@
+{
+  "description": "Hermes ATP viewer: read-only Kibana access to the Hermes ATP dashboard and records.",
+  "metadata": {"managed_by": "hermes-atp-elastic"},
+  "elasticsearch": {
+    "cluster": [],
+    "indices": [
+      {"names": ["hermes-atp-records-*"], "privileges": ["read", "view_index_metadata"]}
+    ],
+    "run_as": []
+  },
+  "kibana": [
+    {
+      "base": [],
+      "feature": {"dashboard_v2": ["read"], "discover_v2": ["read"], "visualize_v2": ["read"]},
+      "spaces": ["default"]
+    }
+  ]
+}

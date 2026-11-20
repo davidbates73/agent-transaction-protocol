@@ -1,0 +1,11 @@
+{
+  "mode": "copy",
+  "es_url": "https://localhost:9200",
+  "ca_cert": "/srv/hermes-atp/certs/ca/ca.crt",
+  "username": "hermes_exporter",
+  "password_file": "/etc/hermes-atp/es-password",
+  "logs": ["/srv/hermes-atp/incoming/records.jsonl"],
+  "pub": "/srv/hermes-atp/incoming/key.pub",
+  "state_dir": "/var/lib/hermes-atp-export",
+  "ship_bodies": false
+}
