@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import random
+import re
 import signal
 import socket
 import ssl
@@ -108,6 +109,7 @@ class Config:
         "logs": ["~/.hermes/atp/records.jsonl"], "pub": None, "state_dir": "~/.hermes/atp/export-state",
         "index_prefix": "hermes-atp", "ship_bodies": False, "batch_size": 500, "batch_bytes": 5_000_000,
         "poll_interval": 2.0, "backoff_initial": 1.0, "backoff_max": 60.0, "timeout": 30.0,
+        "session_link_ttl_days": 30.0,
     }
     ENV = {
         "mode": "HERMES_ATP_EXPORT_MODE", "es_url": "HERMES_ES_URL", "ca_cert": "HERMES_ES_CA_CERT",
@@ -117,6 +119,7 @@ class Config:
         "logs": "HERMES_ATP_EXPORT_LOGS", "pub": "HERMES_ATP_EXPORT_PUB", "state_dir": "HERMES_ATP_EXPORT_STATE",
         "index_prefix": "HERMES_ATP_EXPORT_INDEX_PREFIX", "ship_bodies": "HERMES_ATP_EXPORT_SHIP_BODIES",
         "batch_size": "HERMES_ATP_EXPORT_BATCH_SIZE", "poll_interval": "HERMES_ATP_EXPORT_POLL_INTERVAL",
+        "session_link_ttl_days": "HERMES_ATP_EXPORT_SESSION_LINK_TTL_DAYS",
     }
     SECRET_KEYS = ("password", "api_key")
 
@@ -149,7 +152,7 @@ class Config:
             v[key] = _truthy(v[key])
         for key in ("batch_size", "batch_bytes"):
             v[key] = int(v[key])
-        for key in ("poll_interval", "backoff_initial", "backoff_max", "timeout"):
+        for key in ("poll_interval", "backoff_initial", "backoff_max", "timeout", "session_link_ttl_days"):
             v[key] = float(v[key])
         if isinstance(v["logs"], str):
             v["logs"] = [v["logs"]]
@@ -180,6 +183,8 @@ class Config:
             raise ConfigError("credentials required: api_key, or username + password")
         if self.batch_size < 1:
             raise ConfigError("batch_size must be >= 1")
+        if self.session_link_ttl_days < 0:
+            raise ConfigError("session_link_ttl_days must be >= 0 (0 = never prune)")
 
     def masked(self) -> Dict[str, Any]:
         out = {}
@@ -355,6 +360,10 @@ def resolve_root(session_id: str, parents: Dict[str, str]) -> str:
         cur = nxt
 
 
+# Unverified peek at a line's session, used only to postpone pruning (never to link sessions).
+SCOPE_RE = re.compile(rb'"scope":"([^"\\]{1,1024})"')
+
+
 def record_link(node) -> Optional[Tuple[str, str]]:
     """(session, parent session) carried by a record (the recorder puts parentSessionId on a
     subagent session's first record), or None."""
@@ -376,15 +385,23 @@ class SessionMap:
     later changes that root (the parent's own link turned up in another file or a later copy)
     the session is listed under `restamp`. The exporter only creates documents (its role has no
     update privilege, by design), so those already-shipped documents are fixed by
-    hermes_atp_restamp.py, run with admin credentials on the Elasticsearch host."""
+    hermes_atp_restamp.py, run with admin credentials on the Elasticsearch host.
+
+    Pruning (session_link_ttl_days, default 30; 0 = never): `seen` holds when the exporter last
+    handled a record of each session (hour resolution). prune() forgets sessions not seen for
+    that long, except any session that is an ancestor of one still seen (its link is needed to
+    resolve that session's root). Entries listed under `restamp` are kept until --restamp-done."""
 
     VERSION = 1
+    SEEN_RESOLUTION = 3600  # seconds; `seen` is only rewritten when it moves by this much
 
-    def __init__(self, state_dir: str):
+    def __init__(self, state_dir: str, clock=time.time):
         self.path = os.path.join(state_dir, "sessions.json")
+        self.clock = clock
         self.parents: Dict[str, str] = {}
         self.stamped: Dict[str, str] = {}
         self.restamp: Dict[str, str] = {}
+        self.seen: Dict[str, int] = {}
         self.loaded = False
         self.dirty = False
         try:
@@ -395,6 +412,10 @@ class SessionMap:
             self.parents = {str(k): str(v) for k, v in st.get("parents", {}).items()}
             self.stamped = {str(k): str(v) for k, v in st.get("stamped", {}).items()}
             self.restamp = {str(k): str(v) for k, v in st.get("restamp", {}).items()}
+            self.seen = {str(k): int(v) for k, v in st.get("seen", {}).items()}
+            now = int(self.clock())
+            for sid in set(self.parents) | set(self.parents.values()) | set(self.stamped):
+                self.seen.setdefault(sid, now)  # a map from before pruning: start the clock now
             self.loaded = True
         except FileNotFoundError:
             pass
@@ -403,6 +424,37 @@ class SessionMap:
 
     def root(self, session_id: str) -> str:
         return resolve_root(session_id, self.parents)
+
+    def touch(self, session_id: str) -> None:
+        now = int(self.clock())
+        if now - self.seen.get(session_id, -self.SEEN_RESOLUTION) >= self.SEEN_RESOLUTION:
+            self.seen[session_id] = now
+            self.dirty = True
+
+    def prune(self, ttl_days: float) -> int:
+        """Forget sessions not seen for ttl_days, keeping every ancestor of a session that was.
+        Returns how many sessions were forgotten. ttl_days <= 0 disables pruning."""
+        if ttl_days <= 0:
+            return 0
+        cutoff = int(self.clock()) - int(ttl_days * 86400)
+        known = set(self.parents) | set(self.parents.values()) | set(self.stamped) | set(self.seen)
+        keep = set()
+        for sid in known:
+            if self.seen.get(sid, cutoff) < cutoff:
+                continue
+            cur = sid  # live: keep it and its whole chain of ancestors (cycle-safe)
+            while cur is not None and cur not in keep:
+                keep.add(cur)
+                cur = self.parents.get(cur)
+        drop = known - keep - set(self.restamp)
+        if not drop:
+            return 0
+        for d in (self.parents, self.stamped, self.seen):
+            for sid in drop:
+                d.pop(sid, None)
+        self.dirty = True
+        log.info("session map: forgot %d session(s) not seen for %g days", len(drop), ttl_days)
+        return len(drop)
 
     def learn(self, child: str, parent: str) -> bool:
         old = self.parents.get(child)
@@ -415,6 +467,8 @@ class SessionMap:
                 return False
         self.parents[child] = parent
         self.dirty = True
+        self.touch(child)
+        self.touch(parent)
         for sid, was in list(self.stamped.items()):
             now = self.root(sid)
             if now != was:
@@ -426,6 +480,7 @@ class SessionMap:
         return True
 
     def stamp(self, session_id: str) -> str:
+        self.touch(session_id)
         root = self.root(session_id)
         if self.stamped.get(session_id) != root:
             self.stamped[session_id] = root
@@ -444,7 +499,7 @@ class SessionMap:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({"version": self.VERSION, "parents": self.parents, "stamped": self.stamped,
-                       "restamp": self.restamp}, f, separators=(",", ":"), sort_keys=True)
+                       "restamp": self.restamp, "seen": self.seen}, f, separators=(",", ":"), sort_keys=True)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, self.path)
@@ -626,6 +681,7 @@ class Exporter:
         os.makedirs(cfg.state_dir, mode=0o700, exist_ok=True)
         self.sources = [Source(p, cfg.state_dir) for p in cfg.logs]
         self.sessions = SessionMap(cfg.state_dir)
+        self.last_prune = None
         self.dead_letter = os.path.join(cfg.state_dir, "dead-letter.jsonl")
         self.stopping = False
         self.stats = {"shipped": 0, "duplicates": 0, "dead_lettered": 0, "batches": 0, "retries": 0,
@@ -652,12 +708,21 @@ class Exporter:
                 start = max(start, src.state["offset"])
             end = start
             for end, raw in src.scan_lines(start):
+                m = SCOPE_RE.search(raw)
+                if m:  # about to be shipped: keep its links through the prune below
+                    self.sessions.touch(m.group(1).decode("utf-8", errors="replace"))
                 if b'"parentSessionId"' not in raw:
                     continue
                 self._learn(atp_log.check_line(raw.decode("utf-8", errors="replace"), self.public_key))
             src.scanned_to = max(src.scanned_to, end)
         self.sessions.loaded = True
         self.stats["restamp_pending"] = len(self.sessions.restamp)
+        now = self.sessions.clock()
+        if self.last_prune is None or now - self.last_prune >= 3600:
+            # after relearning: a link needed by a session in the unread lines was just touched
+            self.last_prune = now
+            if self.sessions.prune(self.cfg.session_link_ttl_days):
+                self.sessions.save()
 
     # -- one batch ------------------------------------------------------------------
     def _docs(self, src: Source, lines: List[Tuple[int, bytes]]):

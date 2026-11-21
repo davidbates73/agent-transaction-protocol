@@ -213,6 +213,17 @@ The exporter therefore stamps every document that has a `session_id` with
   ever names two different parents, the smaller id wins. Both rules are independent of
   reading order, so the result is deterministic.
 * **Lines that can't be parsed** have no session and get no `root_session_id`.
+* **Size and pruning.** `sessions.json` holds a few short entries per session (roughly
+  100–200 bytes each: its parent link, the root last stamped, when it was last seen). So
+  that it doesn't grow forever, the exporter forgets sessions it hasn't seen a record of for
+  `session_link_ttl_days` (default 30; `0` = never), checked at start and hourly. It never
+  forgets a session that is an ancestor of one still in use, nor one listed for restamping,
+  and a session with records still waiting to be shipped counts as in use. At 1,000 sessions
+  a day the file stays around 3–6 MB. The one case pruning changes: a session that goes quiet
+  for longer than the TTL and then records again (after its link was forgotten) is stamped as
+  its own root from then on. Raise the TTL if Hermes sessions can pause that long. Rebuilding
+  still works: delete `sessions.json` (or the whole `state_dir`) and every link is relearned
+  from the logs.
 
 **Backfill / restamp (existing indices).** The index template only applies to indices
 created after it, and the exporter only creates documents. For indices written before
@@ -261,6 +272,7 @@ settings with secrets masked, run `--check-config`.
 | `pub` | `HERMES_ATP_EXPORT_PUB` | required | The recorder's `key.pub`, used for verification |
 | `state_dir` | `HERMES_ATP_EXPORT_STATE` | `~/.hermes/atp/export-state` | Checkpoints and dead-letter file (0700) |
 | `ship_bodies` | `HERMES_ATP_EXPORT_SHIP_BODIES` | `false` | See "Bodies" above |
+| `session_link_ttl_days` | `HERMES_ATP_EXPORT_SESSION_LINK_TTL_DAYS` | `30` | How long `sessions.json` remembers a session the exporter hasn't seen a record of (see [root_session_id](#root_session_id-whole-request-grouping)). `0` = never forget |
 | `index_prefix` | `HERMES_ATP_EXPORT_INDEX_PREFIX` | `hermes-atp` | If you change it, change the roles, template and data view too |
 | `batch_size`, `batch_bytes`, `poll_interval`, `backoff_initial`, `backoff_max`, `timeout` | | 500, 5 MB, 2 s, 1 s, 60 s, 30 s | |
 | `allow_insecure_http` | `HERMES_ES_ALLOW_INSECURE_HTTP` | `false` | See "Plain HTTP" below |
@@ -572,7 +584,8 @@ bash implementations/run-all.sh          # includes these suites
     before its parent's; a parent link arriving in a later run (flagged, fixed by the restamp
     plan, same result as one in-order run, `--restamp-done`); the session map surviving
     restarts and being relearned when lost; forged links ignored; cycles and conflicting
-    links.
+    links; pruning `sessions.json` (`session_link_ttl_days`: ancestors of live sessions and
+    sessions with unread records kept, maps from before pruning, rebuild after a prune).
 * `test_assets.py` checks:
   * the vendored `atp_log.py` is byte-identical;
   * every emitted field is mapped;

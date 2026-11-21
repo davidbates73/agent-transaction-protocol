@@ -848,6 +848,94 @@ class RootSessionTests(Base):
         self.assertEqual(hr.plan([("k", "p2"), ("k", "p1")], [("k", None), ("p1", "p1")]), {"p1": ["k"]})
 
 
+class SessionMapPruneTests(Base):
+    DAY = 86400
+    docs = RootSessionTests.docs
+    roots = RootSessionTests.roots
+
+    def age_state(self, days):
+        """Pretend every session in sessions.json was last seen `days` ago."""
+        path = os.path.join(self.tmp, "state", "sessions.json")
+        st = json.loads(slurp(path))
+        old = int(__import__("time").time()) - days * self.DAY
+        st["seen"] = {k: old for k in st["seen"]}
+        with open(path, "w") as f:
+            json.dump(st, f)
+        return path
+
+    def test_prune_keeps_ancestors_of_live_sessions(self):
+        now = [1_000_000_000]
+        sm = hx.SessionMap(self.tmp, clock=lambda: now[0])
+        for child, parent in (("a", "p"), ("b", "p"), ("c", "q"), ("d", "a"), ("x", "y"), ("y", "x")):
+            sm.learn(child, parent)
+        sm.stamp("b")
+        sm.restamp["c"] = "q"  # pending restamp: kept until --restamp-done
+        now[0] += 40 * self.DAY
+        sm.touch("d")            # d is live: d -> a -> p must survive
+        self.assertEqual(sm.prune(0), 0, "0 = never prune")
+        self.assertEqual(sm.prune(30), 4)  # b, q, x and y (a cycle can't keep itself alive)
+        self.assertEqual(sm.parents, {"d": "a", "a": "p", "c": "q"})
+        self.assertEqual(sm.root("d"), "p")
+        self.assertNotIn("b", sm.stamped)
+        self.assertIn("c", sm.restamp)
+        sm.save()
+        again = hx.SessionMap(self.tmp, clock=lambda: now[0])
+        self.assertEqual(again.parents, sm.parents)
+        self.assertEqual(again.prune(30), 0, "idempotent")
+
+    def test_map_from_before_pruning_starts_the_clock_at_load(self):
+        with open(os.path.join(self.tmp, "sessions.json"), "w") as f:
+            json.dump({"version": 1, "parents": {"a": "p"}, "stamped": {"a": "p"}, "restamp": {}}, f)
+        now = [2_000_000_000]
+        sm = hx.SessionMap(self.tmp, clock=lambda: now[0])
+        self.assertEqual(sm.seen, {"a": now[0], "p": now[0]})
+        self.assertEqual(sm.prune(30), 0)
+        now[0] += 31 * self.DAY
+        self.assertEqual(sm.prune(30), 2)
+        self.assertEqual((sm.parents, sm.stamped, sm.seen), ({}, {}, {}))
+
+    def test_exporter_prunes_old_sessions_but_keeps_chains_still_in_use(self):
+        record_sessions(self.log_path, TREE)
+        data = slurp(self.log_path, "rb")
+        lines = data.splitlines(keepends=True)
+        # ship up to sub-b's first record; its later records stay unread
+        cut = next(i for i, l in enumerate(lines) if b'"scope":"sub-b"' in l and b'"parentSessionId"' in l) + 1
+        self.write(b"".join(lines[:cut]))
+        self.exporter().run()
+        state = self.age_state(40)
+        self.write(data)  # the rest arrives after 40 quiet days
+        with open(self.log_path, "ab") as f:  # plus a new subagent of the (old) nested chain
+            f.write(record_sessions(os.path.join(self.tmp, "late.jsonl"), [("sub-a2", "sub-a1")], start=1794799000))
+        self.exporter(session_link_ttl_days=30).run()
+        st = json.loads(slurp(state))
+        # sub-b's later records were unread, so its link was kept; sub-a2 keeps sub-a1 -> sub-a -> req-p
+        self.assertEqual(self.roots()["sub-b"], {"req-p"})
+        self.assertEqual(self.roots()["sub-a2"], {"req-p"})
+        self.assertEqual(self.roots()["sub-a1x"], {"req-p"})
+        self.assertEqual(st["parents"]["sub-a2"], "sub-a1")
+        # nothing is stale yet; age everything and run with nothing new: all forgotten
+        self.age_state(40)
+        ex = self.exporter(session_link_ttl_days=30)
+        ex.run()
+        st = json.loads(slurp(state))
+        self.assertEqual((st["parents"], st["stamped"], st["seen"]), ({}, {}, {}))
+        # rebuild from the logs still works: a re-read (here: a lost checkpoint) relearns every link
+        for f in glob.glob(os.path.join(self.tmp, "state", "source-*.json")):
+            os.remove(f)
+        os.remove(state)
+        self.exporter(session_link_ttl_days=30).run()
+        self.assertEqual(json.loads(slurp(state))["parents"]["sub-a1x"], "sub-a1")
+
+    def test_ttl_is_configurable_and_shown(self):
+        self.assertEqual(self.cfg().session_link_ttl_days, 30.0)
+        cfg = hx.Config.load(env={"HERMES_ATP_EXPORT_SESSION_LINK_TTL_DAYS": "7"},
+                             overrides={"es_url": "https://x:9200", "username": "u", "password": "p", "pub": PUB})
+        self.assertEqual(cfg.session_link_ttl_days, 7.0)
+        self.assertEqual(cfg.masked()["session_link_ttl_days"], 7.0, "--check-config prints it")
+        with self.assertRaises(hx.ConfigError):
+            self.cfg(session_link_ttl_days=-1)
+
+
 class IncrementalVerifyTests(Base):
     """The per-document verify status agrees with `atp_cli.py verify` (atp_log.verify_log)."""
 
