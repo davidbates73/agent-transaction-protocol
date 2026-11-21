@@ -8,7 +8,8 @@
 #  3. Role hermes_exporter (create_doc + auto_configure on hermes-atp-records-*, nothing else)
 #     and user hermes_exporter; the index template.
 #  4. Waits for Kibana; role hermes_viewer (read-only: index read + dashboard/discover/visualize
-#     read in the default space), user hermes_viewer; imports the dashboard saved objects.
+#     read in the default space), user hermes_viewer; imports the saved objects of both
+#     dashboards (Hermes ATP overview, Hermes ATP request lifecycle).
 #
 # Never prints a password: credentials are passed to curl through a config on a private fd,
 # and request bodies that contain passwords are sent on stdin.
@@ -133,9 +134,12 @@ r=$(printf '{"password":%s,"roles":["hermes_viewer"],"full_name":"Hermes ATP vie
     req PUT "$ES_URL/_security/user/hermes_viewer" -H 'Content-Type: application/json' --data-binary @-)
 expect_2xx "user hermes_viewer" "$r"
 
-r=$(req POST "$KIBANA_URL/api/saved_objects/_import?overwrite=true" -H 'kbn-xsrf: hermes-atp-setup' \
-    --form "file=@$KIBANA_DIR/hermes-atp-dashboard.ndjson")
-expect_2xx "import dashboard saved objects" "$r"
-body_of "$r" | grep -q '"success":true' || die "saved-object import reported errors: $(body_of "$r" | head -c 800)"
+# Overview first: it carries the shared data view. Both files also import on their own.
+for nd in hermes-atp-dashboard.ndjson hermes-atp-lifecycle.ndjson; do
+  r=$(req POST "$KIBANA_URL/api/saved_objects/_import?overwrite=true" -H 'kbn-xsrf: hermes-atp-setup' \
+      --form "file=@$KIBANA_DIR/$nd")
+  expect_2xx "import saved objects $nd" "$r"
+  body_of "$r" | grep -q '"success":true' || die "saved-object import of $nd reported errors: $(body_of "$r" | head -c 800)"
+done
 
 say "setup complete"

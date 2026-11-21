@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(ELASTIC, "kibana"))
 import hermes_atp_export as hx  # noqa: E402
 import atp_log  # noqa: E402
 import build_saved_objects  # noqa: E402
+import build_lifecycle_dashboard as lifecycle  # noqa: E402
 
 def slurp(path, mode="r", **kw):
     with open(path, mode, **kw) as f:
@@ -303,6 +304,265 @@ class KibanaObjectsTests(unittest.TestCase):
         for o in self.objs:
             self.assertEqual(o["coreMigrationVersion"], "8.8.0")
             self.assertIn("typeMigrationVersion", o)
+
+
+def es_fields(obj, out=None):
+    """Every ES field name an aggregation / sort / _source / term query in a Vega body refers to."""
+    out = set() if out is None else out
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == "field" and isinstance(v, str):
+                out.add(v)
+            elif k in ("term", "range") and isinstance(v, dict):
+                out |= set(v)
+            elif k == "sort" and isinstance(v, list):
+                for item in v:
+                    out |= set(item) if isinstance(item, dict) else {item}
+            elif k in ("_source", "includes") and isinstance(v, list):
+                out |= set(v)
+            else:
+                es_fields(v, out)
+    elif isinstance(obj, list):
+        for x in obj:
+            es_fields(x, out)
+    return out
+
+
+def es_urls(spec):
+    data = spec["data"] if isinstance(spec["data"], list) else [spec["data"]]
+    return [d["url"] for d in data if isinstance(d.get("url"), dict)]
+
+
+class LifecycleDashboardTests(unittest.TestCase):
+    """The "Hermes ATP request lifecycle" dashboard (kibana/hermes-atp-lifecycle.ndjson)."""
+    ndjson = read("kibana", "hermes-atp-lifecycle.ndjson")
+    objs = [json.loads(l) for l in ndjson.splitlines()]
+    by_id = {o["id"]: o for o in objs}
+    (dash,) = [o for o in objs if o["type"] == "dashboard"]
+    panels = json.loads(dash["attributes"]["panelsJSON"])
+
+    def vega(self, oid):
+        vis = json.loads(self.by_id[oid]["attributes"]["visState"])
+        self.assertEqual(vis["type"], "vega")
+        return json.loads(vis["params"]["spec"])
+
+    def test_generated_file_is_up_to_date(self):
+        self.assertEqual(self.ndjson, lifecycle.build(), "run: python3 kibana/build_lifecycle_dashboard.py")
+
+    def test_stable_unique_ids(self):
+        ids = [(o["type"], o["id"]) for o in self.objs]
+        self.assertEqual(len(ids), len(set(ids)))
+        for _, i in ids:
+            self.assertTrue(i.startswith("hermes-atp-"), i)
+        self.assertEqual(self.dash["id"], "hermes-atp-lifecycle")
+        self.assertEqual(self.dash["attributes"]["title"], "Hermes ATP request lifecycle")
+        self.assertEqual(lifecycle.build(), lifecycle.build(), "deterministic output")
+        overview = [json.loads(l) for l in read("kibana", "hermes-atp-dashboard.ndjson").splitlines()]
+        clash = {(o["type"], o["id"]) for o in overview} & set(ids)
+        self.assertEqual(clash, {("index-pattern", "hermes-atp-records")}, "only the shared data view overlaps")
+        (dv_a,) = [o for o in overview if o["type"] == "index-pattern"]
+        self.assertEqual(dv_a, self.by_id["hermes-atp-records"], "same data view object in both files")
+
+    def test_references_resolve_within_the_file(self):
+        ids = {(o["type"], o["id"]) for o in self.objs}
+        for o in self.objs:
+            for r in o["references"]:
+                self.assertIn((r["type"], r["id"]), ids, f"{o['id']} -> {r}")
+        names = {r["name"] for r in self.dash["references"]}
+        for p in self.panels:
+            self.assertIn(f"{p['panelIndex']}:{p['panelRefName']}", names)
+        self.assertEqual(len(self.panels), len(self.objs) - 2, "every object but the data view and dashboard is a panel")
+
+    def test_panel_types_and_layout(self):
+        kinds = sorted(p["type"] for p in self.panels)
+        self.assertEqual(kinds, ["lens"] * 7 + ["search"] + ["visualization"] * 2)
+        for p in self.panels:
+            g = p["gridData"]
+            self.assertLessEqual(g["x"] + g["w"], 48, p)
+        cells = set()
+        for p in self.panels:
+            g = p["gridData"]
+            for x in range(g["x"], g["x"] + g["w"]):
+                for y in range(g["y"], g["y"] + g["h"]):
+                    self.assertNotIn((x, y), cells, f"panels overlap at {(x, y)}")
+                    cells.add((x, y))
+
+    def test_no_paid_or_external_features(self):
+        self.assertEqual({o["type"] for o in self.objs}, {"index-pattern", "lens", "visualization", "search", "dashboard"})
+        for o in self.objs:
+            if o["type"] == "visualization":
+                spec = self.vega(o["id"])
+                self.assertIn(spec["$schema"], ("https://vega.github.io/schema/vega/v5.json",
+                                                "https://vega.github.io/schema/vega-lite/v5.json"))
+                text = json.dumps({k: v for k, v in spec.items() if k != "$schema"})
+                self.assertNotRegex(text, r"https?://", "no external data or images")
+        text = self.ndjson.lower()
+        for paid in ("esql", "\"ml\"", "anomaly_detection", "alert", "reporting", "canvas"):
+            self.assertNotIn(paid, text.replace("alerting", ""))
+
+    def test_vega_queries_follow_the_dashboard(self):
+        for oid in ("hermes-atp-lc-session-tree", "hermes-atp-lc-waterfall"):
+            urls = es_urls(self.vega(oid))
+            self.assertTrue(urls, oid)
+            for u in urls:
+                self.assertIs(u["%context%"], True, f"{oid}: dashboard query/filters/controls must apply")
+                self.assertEqual(u["%timefield%"], "@timestamp", f"{oid}: dashboard time range must apply")
+                self.assertEqual(u["index"], TEMPLATE["index_patterns"][0])
+                self.assertNotIn("query", u["body"], "a body query would replace the dashboard context")
+                for f in es_fields(u["body"]):
+                    self.assertIn(f, FIELDS, (oid, f))
+                    self.assertIn(FIELDS[f]["type"], ("keyword", "long", "date", "boolean"), (oid, f))
+
+    def test_session_tree_uses_the_recorder_links(self):
+        spec = self.vega("hermes-atp-lc-session-tree")
+        self.assertEqual(spec["$schema"], "https://vega.github.io/schema/vega/v5.json")
+        (u,) = es_urls(spec)
+        fields = es_fields(u["body"])
+        for f in ("session_id", "parent_session_id", "parent_turn_id", "parent_subagent_id", "is_session_start",
+                  "tokens.total", "api_duration_ms", "duration_ms", "model"):
+            self.assertIn(f, fields)
+        kinds = [t["type"] for d in spec["data"] for t in d.get("transform", [])]
+        for k in ("stratify", "tree", "treelinks", "linkpath", "lookup"):
+            self.assertIn(k, kinds)
+        names = [d["name"] for d in spec["data"]]
+        self.assertEqual(len(names), len(set(names)))
+        self.assertNotIn("root", names, "'root' is reserved in Vega")
+        marks = {m["type"] for m in spec["marks"]}
+        self.assertTrue({"symbol", "path", "text"} <= marks)
+
+    def test_waterfall(self):
+        spec = self.vega("hermes-atp-lc-waterfall")
+        self.assertEqual(spec["$schema"], "https://vega.github.io/schema/vega-lite/v5.json")
+        (u,) = es_urls(spec)
+        self.assertEqual(spec["data"]["format"]["property"], "hits.hits")
+        src = set(u["body"]["_source"])
+        for f in ("@timestamp", "session_id", "seq", "event", "duration_ms", "api_duration_ms", "tool_name", "model",
+                  "status", "tokens.total", "tool_call_id", "api_request_id"):
+            self.assertIn(f, src)
+        layers = [l["mark"]["type"] for l in spec["layer"]]
+        self.assertEqual(layers, ["bar", "point"])
+        self.assertEqual(spec["layer"][0]["encoding"]["x2"], {"field": "end"})
+        tips = {t["title"] for t in spec["encoding"]["tooltip"]}
+        self.assertTrue({"tool / model", "status", "tokens", "duration ms"} <= tips)
+        self.assertEqual(set(spec["encoding"]["color"]["scale"]["domain"]) - {"started, no completion"},
+                         {"post_api_request", "post_tool_call", "api_request_error"})
+
+    def test_step_table(self):
+        a = self.by_id["hermes-atp-lifecycle-steps"]["attributes"]
+        (tab,) = a["tabs"]
+        self.assertEqual(tab["attributes"]["sort"], [["session_id", "asc"], ["seq", "asc"]])
+        self.assertEqual(tab["attributes"]["columns"][:2], ["session_id", "seq"])
+        for c in ("event", "tool_name", "model", "status", "duration_ms", "tokens.total", "verify.status"):
+            self.assertIn(c, tab["attributes"]["columns"])
+        for c in tab["attributes"]["columns"] + ["session_id"]:
+            self.assertIn(c, FIELDS)
+        ss = json.loads(tab["attributes"]["kibanaSavedObjectMeta"]["searchSourceJSON"])
+        self.assertEqual(ss["indexRefName"], "kibanaSavedObjectMeta.searchSourceJSON.index")
+
+    def test_rollup_tiles(self):
+        tiles = [o for o in self.objs if o["type"] == "lens"]
+        self.assertEqual([t["attributes"]["title"] for t in tiles],
+                         ["Tokens", "Elapsed (first → last record)", "Model time", "Tool time", "Failed steps",
+                          "Retries", "Verify pass rate"])
+        for t in tiles:
+            st = t["attributes"]["state"]
+            self.assertEqual(t["attributes"]["visualizationType"], "lnsMetric")
+            cols = st["datasourceStates"]["formBased"]["layers"][lifecycle.LAYER]["columns"]
+            self.assertIn(st["visualization"]["metricAccessor"], cols)
+            for cid, col in cols.items():
+                for ref in col.get("references", []):
+                    self.assertIn(ref, cols, (t["id"], cid))
+                if col.get("sourceField") not in (None, "___records___"):
+                    self.assertIn(col["sourceField"], FIELDS, t["id"])
+                if "filter" in col:
+                    for f in re.findall(r"([A-Za-z_@][\w.]*)\s*[:>]", col["filter"]["query"]):
+                        self.assertIn(f, FIELDS, (t["id"], f))
+            self.assertEqual(set(st["datasourceStates"]["formBased"]["layers"][lifecycle.LAYER]["columnOrder"]), set(cols))
+        verify = self.by_id["hermes-atp-lc-verify"]["attributes"]["state"]["datasourceStates"]["formBased"]
+        self.assertEqual(verify["layers"][lifecycle.LAYER]["columns"]["v"]["params"]["formula"],
+                         "count(kql='verify.valid : true') / count()")
+
+    def test_controls(self):
+        group = self.dash["attributes"]["controlGroupInput"]
+        controls = json.loads(group["panelsJSON"])
+        self.assertEqual([c["explicitInput"]["fieldName"] for c in sorted(controls.values(), key=lambda c: c["order"])],
+                         ["session_id", "turn_id", "event"])
+        refs = {r["name"]: r for r in self.dash["references"]}
+        for cid, c in controls.items():
+            self.assertEqual(c["type"], "optionsListControl")
+            self.assertEqual(c["explicitInput"]["id"], cid)
+            self.assertEqual(FIELDS[c["explicitInput"]["fieldName"]]["type"], "keyword")
+            r = refs[f"controlGroup_{cid}:optionsListDataView"]
+            self.assertEqual((r["type"], r["id"]), ("index-pattern", "hermes-atp-records"))
+        ignore = json.loads(group["ignoreParentSettingsJSON"])
+        self.assertFalse(any(ignore.values()), "controls follow the dashboard query, filters and time")
+
+    def test_viewer_role_can_open_every_panel_type(self):
+        need = {"dashboard": "dashboard_v2", "lens": "visualize_v2", "visualization": "visualize_v2",
+                "search": "discover_v2"}
+        role = json.loads(read("setup", "role-hermes-viewer.kibana.json"))
+        (k,) = role["kibana"]
+        for o in self.objs:
+            if o["type"] in need:
+                self.assertEqual(k["feature"].get(need[o["type"]]), ["read"], o["type"])
+
+    def test_setup_imports_both_files(self):
+        sh = read("setup", "setup.sh")
+        self.assertIn("for nd in hermes-atp-dashboard.ndjson hermes-atp-lifecycle.ndjson; do", sh)
+        self.assertIn("_import?overwrite=true", sh)
+
+    def test_panels_match_real_record_shapes(self):
+        """Drive the real recorder (fake-Hermes harness, v0.23.1-shaped subagents) through the
+        exporter's build_document and check what the panels assume about the documents."""
+        import tempfile
+        sys.path.insert(0, os.path.join(PLUGIN, "tests"))
+        import support as S
+        with tempfile.TemporaryDirectory() as d:
+            S.run_fake_session({"HERMES_ATP_HOME": d}, clock=S.TickClock(), real_subagents=True, crash=True,
+                               secrets=False)
+            path = os.path.join(d, "records.jsonl")
+            pub = atp_log.load_public_key(slurp(os.path.join(d, "key.pub")))
+            chain, docs = {}, []
+            for i, raw in enumerate(slurp(path, "rb").split(b"\n")[:-1]):
+                checked = atp_log.check_line(raw.decode("utf-8"), pub)
+                cp = atp_log.chain_step(chain, checked["node"], None) if checked["scope"] else []
+                docs.append(hx.build_document(raw, checked, cp, index_prefix="hermes-atp", source=path, offset=0,
+                                              line=i + 1, ship_bodies=False, prefix_sha256="0" * 64)[2])
+        events = {doc["event"] for doc in docs}
+        self.assertTrue({"pre_api_request", "post_api_request", "pre_tool_call", "post_tool_call"} <= events)
+        wf = self.vega("hermes-atp-lc-waterfall")
+        self.assertLessEqual(set(wf["encoding"]["color"]["scale"]["domain"]) - {"started, no completion"},
+                             set(build_document_events()))
+        self.assertIn("api_request_error", build_document_events())
+        by_session = {}
+        for doc in docs:
+            by_session.setdefault(doc["session_id"], []).append(doc)
+        children = {s: ds for s, ds in by_session.items() if any("parent_session_id" in x for x in ds)}
+        self.assertEqual(set(children), {"sess-child", "sess-grandchild"})
+        for s, ds in children.items():
+            first = min(ds, key=lambda x: x["seq"])
+            self.assertTrue(first["is_session_start"])
+            self.assertIn("parent_session_id", first, "the tree reads the link from the seq-0 record")
+            self.assertIn(first["parent_session_id"], by_session, "parent is a recorded session")
+        for doc in docs:
+            if doc["event"] == "post_tool_call":
+                self.assertIn("duration_ms", doc)
+                self.assertIn("tool_call_id", doc)
+            if doc["event"] in ("post_api_request", "api_request_error"):
+                self.assertIn("api_duration_ms", doc)
+                self.assertIn("api_request_id", doc)
+            if doc["event"] == "post_api_request":
+                self.assertIn("total", doc["tokens"])
+            self.assertIn("valid", doc["verify"])
+        crash = [x["event"] for x in by_session["sess-crash"]]
+        self.assertEqual(crash[-1], "pre_tool_call", "an unfinished step the waterfall marks")
+
+
+def build_document_events():
+    """The hook events the recorder turns into records (keys of recorder.ACTION_TYPE)."""
+    src = slurp(os.path.join(PLUGIN, "recorder.py"), encoding="utf-8")
+    start = src.index("ACTION_TYPE = {")
+    return re.findall(r'"([a-z_]+)":', src[start:src.index("}", start)])
 
 
 class DocsTests(unittest.TestCase):
