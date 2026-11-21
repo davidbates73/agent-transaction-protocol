@@ -217,8 +217,9 @@ The exporter therefore stamps every document that has a `session_id` with
   100–200 bytes each: its parent link, the root last stamped, when it was last seen). So
   that it doesn't grow forever, the exporter forgets sessions it hasn't seen a record of for
   `session_link_ttl_days` (default 30; `0` = never), checked at start and hourly. It never
-  forgets a session that is an ancestor of one still in use, nor one listed for restamping,
-  and a session with records still waiting to be shipped counts as in use. At 1,000 sessions
+  forgets a session still in use (seen within the TTL, or with records still waiting to be
+  shipped) or listed for restamping, nor any session in the chain of ancestors of one of
+  those, so their roots keep resolving. At 1,000 sessions
   a day the file stays around 3–6 MB. The one case pruning changes: a session that goes quiet
   for longer than the TTL and then records again (after its link was forgotten) is stamped as
   its own root from then on. Raise the TTL if Hermes sessions can pause that long. Rebuilding

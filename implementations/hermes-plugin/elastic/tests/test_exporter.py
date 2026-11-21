@@ -873,7 +873,7 @@ class SessionMapPruneTests(Base):
         now[0] += 40 * self.DAY
         sm.touch("d")            # d is live: d -> a -> p must survive
         self.assertEqual(sm.prune(0), 0, "0 = never prune")
-        self.assertEqual(sm.prune(30), 4)  # b, q, x and y (a cycle can't keep itself alive)
+        self.assertEqual(sm.prune(30), 3)  # b, x and y (a cycle can't keep itself alive; c keeps q)
         self.assertEqual(sm.parents, {"d": "a", "a": "p", "c": "q"})
         self.assertEqual(sm.root("d"), "p")
         self.assertNotIn("b", sm.stamped)
@@ -882,6 +882,51 @@ class SessionMapPruneTests(Base):
         again = hx.SessionMap(self.tmp, clock=lambda: now[0])
         self.assertEqual(again.parents, sm.parents)
         self.assertEqual(again.prune(30), 0, "idempotent")
+
+    def chain_map(self, now):
+        sm = hx.SessionMap(self.tmp, clock=lambda: now[0])
+        for child, parent in (("c", "b"), ("b", "a"), ("a", "p"), ("z", "y")):
+            sm.learn(child, parent)
+        sm.stamp("c")
+        return sm
+
+    def test_stale_pending_restamp_keeps_its_whole_chain(self):
+        """QA H5-F2 repro: c -> b -> a -> p, c pending restamp, nothing live, 40 days later."""
+        now = [1_000_000_000]
+        sm = self.chain_map(now)
+        sm.restamp["c"] = "p"
+        now[0] += 40 * self.DAY
+        self.assertEqual(sm.prune(30), 2)  # only z and y
+        self.assertEqual(sm.parents, {"c": "b", "b": "a", "a": "p"})
+        self.assertEqual(sm.root("c"), "p")
+        self.assertEqual(sm.restamp, {"c": "p"})
+        sm.clear_restamp()
+        self.assertEqual(sm.prune(30), 4, "after --restamp-done the stale chain goes too")
+
+    def test_unshipped_session_keeps_its_whole_chain(self):
+        now = [1_000_000_000]
+        sm = self.chain_map(now)
+        now[0] += 40 * self.DAY
+        self.assertEqual(sm.prune(30, unshipped={"c"}), 2)
+        self.assertEqual(sm.root("c"), "p")
+        self.assertEqual(sm.prune(30), 4, "once shipped and stale, forgotten")
+
+    def test_exporter_keeps_multi_hop_chain_of_a_stale_session_with_unread_records(self):
+        record_sessions(self.log_path, TREE)
+        data = slurp(self.log_path, "rb")
+        lines = data.splitlines(keepends=True)
+        # ship up to sub-a1x's first record (chain sub-a1x -> sub-a1 -> sub-a -> req-p)
+        cut = next(i for i, l in enumerate(lines) if b'"scope":"sub-a1x"' in l and b'"parentSessionId"' in l) + 1
+        self.write(b"".join(lines[:cut]))
+        self.exporter().run()
+        state = self.age_state(40)
+        self.write(data)  # sub-a1x's remaining records arrive after 40 quiet days
+        self.exporter(session_link_ttl_days=30).run()
+        self.assertEqual(self.roots()["sub-a1x"], {"req-p"})
+        parents = json.loads(slurp(state))["parents"]
+        self.assertEqual({k: parents[k] for k in ("sub-a1x", "sub-a1", "sub-a")},
+                         {"sub-a1x": "sub-a1", "sub-a1": "sub-a", "sub-a": "req-p"})
+        self.assertNotIn("sub-b", parents, "an unrelated stale session is forgotten")
 
     def test_map_from_before_pruning_starts_the_clock_at_load(self):
         with open(os.path.join(self.tmp, "sessions.json"), "w") as f:

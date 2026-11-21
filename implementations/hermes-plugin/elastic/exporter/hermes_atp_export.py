@@ -43,7 +43,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_DIR = os.path.dirname(os.path.dirname(HERE))  # implementations/hermes-plugin
@@ -431,22 +431,24 @@ class SessionMap:
             self.seen[session_id] = now
             self.dirty = True
 
-    def prune(self, ttl_days: float) -> int:
-        """Forget sessions not seen for ttl_days, keeping every ancestor of a session that was.
-        Returns how many sessions were forgotten. ttl_days <= 0 disables pruning."""
+    def prune(self, ttl_days: float, unshipped: Iterable[str] = ()) -> int:
+        """Forget sessions not seen for ttl_days. Kept, each with its whole chain of ancestors (so
+        its root still resolves): sessions seen within ttl_days, sessions listed for restamping,
+        and `unshipped` sessions (records still waiting in a log). Returns how many sessions
+        were forgotten. ttl_days <= 0 disables pruning."""
         if ttl_days <= 0:
             return 0
         cutoff = int(self.clock()) - int(ttl_days * 86400)
         known = set(self.parents) | set(self.parents.values()) | set(self.stamped) | set(self.seen)
+        seeds = {sid for sid in known if self.seen.get(sid, cutoff) >= cutoff}
+        seeds |= set(self.restamp) | set(unshipped)
         keep = set()
-        for sid in known:
-            if self.seen.get(sid, cutoff) < cutoff:
-                continue
-            cur = sid  # live: keep it and its whole chain of ancestors (cycle-safe)
+        for sid in seeds:
+            cur = sid  # keep it and its whole chain of ancestors (cycle-safe)
             while cur is not None and cur not in keep:
                 keep.add(cur)
                 cur = self.parents.get(cur)
-        drop = known - keep - set(self.restamp)
+        drop = known - keep
         if not drop:
             return 0
         for d in (self.parents, self.stamped, self.seen):
@@ -700,6 +702,7 @@ class Exporter:
         log (or later in a log processed after it). Without a usable session map (first run,
         or the file was lost) the already-shipped part is scanned too, so later documents of
         known sessions keep their roots."""
+        unshipped = set()
         for src in self.sources:
             if not src.open():
                 continue
@@ -710,7 +713,10 @@ class Exporter:
             for end, raw in src.scan_lines(start):
                 m = SCOPE_RE.search(raw)
                 if m:  # about to be shipped: keep its links through the prune below
-                    self.sessions.touch(m.group(1).decode("utf-8", errors="replace"))
+                    sid = m.group(1).decode("utf-8", errors="replace")
+                    self.sessions.touch(sid)
+                    if end > src.state["offset"]:
+                        unshipped.add(sid)
                 if b'"parentSessionId"' not in raw:
                     continue
                 self._learn(atp_log.check_line(raw.decode("utf-8", errors="replace"), self.public_key))
@@ -721,7 +727,7 @@ class Exporter:
         if self.last_prune is None or now - self.last_prune >= 3600:
             # after relearning: a link needed by a session in the unread lines was just touched
             self.last_prune = now
-            if self.sessions.prune(self.cfg.session_link_ttl_days):
+            if self.sessions.prune(self.cfg.session_link_ttl_days, unshipped):
                 self.sessions.save()
 
     # -- one batch ------------------------------------------------------------------
