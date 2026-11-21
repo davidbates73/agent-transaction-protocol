@@ -464,8 +464,9 @@ class LifecycleDashboardTests(unittest.TestCase):
         (label_mark,) = [m for m in tree["marks"] if m["type"] == "text" and m.get("from")]
         self.assertTrue(label_mark["encode"]["update"]["text"]["signal"].startswith("datum.label"))
         for spec_text in (tree_text, wf_text):
-            self.assertNotIn("slice(datum.id, -14)", spec_text)
-            self.assertNotIn("slice(datum.session, -12)", spec_text)
+            self.assertNotIn("slice(datum.id, -14)", spec_text)  # the old front-truncated ids
+        # -12 appears only in the collision fallback (test_colliding_labels_are_disambiguated)
+        self.assertEqual(wf_text.count("slice(datum.session, -12)"), 1)
         # the full id stays in the tooltips
         self.assertIn("'session': datum.id", tree_text)
         self.assertIn({"field": "session", "title": "session"}, wf["layer"][0]["encoding"]["tooltip"])
@@ -537,6 +538,38 @@ class LifecycleDashboardTests(unittest.TestCase):
         self.assertIn("error_type : *", lifecycle.ERROR_KQL)
         tree = self.vega("hermes-atp-lc-session-tree")
         self.assertIn('"errors": {"filter": ' + json.dumps(lifecycle.ERROR_FILTER), json.dumps(tree))
+
+    def test_colliding_labels_are_disambiguated(self):
+        """QA H4-F3: same role + same 6-char tail must still give distinct labels in a view."""
+        self.assertEqual(lifecycle.session_label("alpha-abc123", {}), lifecycle.session_label("omega-abc123", {}))
+        got = lifecycle.session_labels([("alpha-abc123", 2), ("omega-abc123", 1), ("req-demo-1", 0)], {})
+        self.assertEqual(got, {"alpha-abc123": "parent · alpha-abc123", "omega-abc123": "parent · omega-abc123",
+                               "req-demo-1": "parent · …demo-1"}, "a clash grows the tail to 12 characters")
+        got = lifecycle.session_labels([("x-zzzzzzabc123", 5), ("y-zzzzzzabc123", 4), ("z-q-abc123", 1)],
+                                       {"z-q-abc123": "x-zzzzzzabc123"})
+        self.assertEqual(got["y-zzzzzzabc123"], "parent · …zzzzzzabc123 [1]", "still equal: [n] by start time")
+        self.assertEqual(got["x-zzzzzzabc123"], "parent · …zzzzzzabc123 [2]")
+        self.assertEqual(got["z-q-abc123"], "sub · …abc123", "a different role is already distinct")
+        same_start = lifecycle.session_labels([("b-zzzzzzabc123", 1), ("a-zzzzzzabc123", 1)], {})
+        self.assertEqual(same_start["a-zzzzzzabc123"][-3:], "[1]", "ties broken by session id")
+        # both specs apply the same rule
+        tree = self.vega("hermes-atp-lc-session-tree")
+        (sessions,) = [d for d in tree["data"] if d["name"] == "sessions"]
+        tf = sessions["transform"]
+        self.assertIn({"type": "joinaggregate", "groupby": ["base"], "ops": ["count"], "as": ["n6"]}, tf)
+        self.assertIn({"type": "joinaggregate", "groupby": ["long"], "ops": ["count"], "as": ["n12"]}, tf)
+        self.assertIn({"type": "window", "groupby": ["long"], "ops": ["row_number"], "as": ["k"],
+                       "sort": {"field": ["t_first", "id"], "order": ["ascending", "ascending"]}}, tf)
+        self.assertEqual(tf[-1], {"type": "formula", "as": "label", "expr": lifecycle.FINAL_LABEL_EXPR})
+        wf = self.vega("hermes-atp-lc-waterfall")["layer"][0]["transform"]
+        self.assertIn({"joinaggregate": [{"op": "distinct", "field": "session", "as": "n6"}], "groupby": ["base"]}, wf)
+        self.assertIn({"joinaggregate": [{"op": "distinct", "field": "session", "as": "n12"}], "groupby": ["long"]},
+                      wf)
+        self.assertIn({"window": [{"op": "dense_rank", "as": "k"}], "groupby": ["long"],
+                       "sort": [{"field": "session_start"}, {"field": "session"}]}, wf)
+        self.assertIn({"calculate": lifecycle.FINAL_LABEL_EXPR, "as": "label"}, wf)
+        long12 = lifecycle.label_expr("datum.session", "datum.level", lifecycle.LONG_TAIL)
+        self.assertIn("slice(datum.session, -12)", long12)
 
     def test_fixture_sessions_get_distinct_labels(self):
         """Real-recorder session ids (fake-Hermes harness + a real-Hermes run's shapes)."""

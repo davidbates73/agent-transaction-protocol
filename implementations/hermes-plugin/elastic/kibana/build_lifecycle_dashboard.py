@@ -83,6 +83,7 @@ def es_url(body):
 # parent_session_id links in the time range, NOT from the dashboard filters, so a session keeps
 # its label when you filter down to it. The full session id is in every tooltip.
 LABEL_TAIL = 6
+LONG_TAIL = 12  # used instead when two sessions in the view share role + 6-char tail
 MAX_LABEL_DEPTH = 4
 ROLE_SUFFIX = ["", "²", "³", "⁴⁺"]
 # Links for the labels: every subagent session's first record (it carries parent_session_id).
@@ -111,12 +112,19 @@ def role_expr(level: str) -> str:
             f"{json.dumps(ROLE_SUFFIX, ensure_ascii=False).replace(chr(34), chr(39))}[min({level}, {MAX_LABEL_DEPTH}) - 1])")
 
 
-def short_expr(sid: str) -> str:
-    return f"(length({sid}) > {LABEL_TAIL} ? '…' + slice({sid}, -{LABEL_TAIL}) : {sid})"
+def short_expr(sid: str, tail: int = LABEL_TAIL) -> str:
+    return f"(length({sid}) > {tail} ? '…' + slice({sid}, -{tail}) : {sid})"
 
 
-def label_expr(sid: str, level: str) -> str:
-    return f"{role_expr(level)} + ' · ' + {short_expr(sid)}"
+def label_expr(sid: str, level: str, tail: int = LABEL_TAIL) -> str:
+    return f"{role_expr(level)} + ' · ' + {short_expr(sid, tail)}"
+
+
+# Distinct labels within a view: when sessions share a label, the tail grows to LONG_TAIL
+# characters; if that still collides, " [n]" is appended, n counting those sessions by start
+# time, then session id. Expressions over the fields `base` / `n6` / `long` / `n12` / `k`.
+LONG_LABEL_EXPR = "datum.n6 > 1 ? {long} : datum.base"
+FINAL_LABEL_EXPR = "datum.n12 > 1 ? datum.long + ' [' + datum.k + ']' : datum.long"
 
 
 def session_label(session_id: str, parents: dict) -> str:
@@ -128,6 +136,24 @@ def session_label(session_id: str, parents: dict) -> str:
     role = "parent" if level == 0 else "sub" + ROLE_SUFFIX[level - 1]
     tail = "…" + session_id[-LABEL_TAIL:] if len(session_id) > LABEL_TAIL else session_id
     return f"{role} · {tail}"
+
+
+def session_labels(sessions, parents: dict) -> dict:
+    """Python twin of the specs' distinct labels: sessions = [(session_id, start), ...] in the
+    view; returns {session_id: label}."""
+    def tail(sid, n):
+        return "…" + sid[-n:] if len(sid) > n else sid
+
+    base = {sid: session_label(sid, parents) for sid, _ in sessions}
+    longer = {}
+    for sid, _ in sessions:
+        clash = sum(1 for x in base.values() if x == base[sid]) > 1
+        longer[sid] = base[sid].split(" · ")[0] + " · " + tail(sid, LONG_TAIL) if clash else base[sid]
+    out = {}
+    for sid, start in sessions:
+        same = sorted((st, x) for x, st in sessions if longer[x] == longer[sid])
+        out[sid] = longer[sid] if len(same) == 1 else f"{longer[sid]} [{same.index((start, sid)) + 1}]"
+    return out
 
 
 def level_expr(*ps: str) -> str:
@@ -209,7 +235,15 @@ def session_tree_spec():
                     {"type": "lookup", "from": "linkdocs", "key": "id", "fields": ["p3"], "as": ["a3"]},
                     {"type": "formula", "as": "p4", "expr": "datum.a3 ? datum.a3.up : null"},
                     {"type": "formula", "as": "level", "expr": level_expr("datum.p1", "datum.p2", "datum.p3", "datum.p4")},
-                    {"type": "formula", "as": "label", "expr": label_expr("datum.id", "datum.level")},
+                    {"type": "formula", "as": "base", "expr": label_expr("datum.id", "datum.level")},
+                    # distinct within the view (see LONG_LABEL_EXPR)
+                    {"type": "joinaggregate", "groupby": ["base"], "ops": ["count"], "as": ["n6"]},
+                    {"type": "formula", "as": "long",
+                     "expr": LONG_LABEL_EXPR.format(long=label_expr("datum.id", "datum.level", LONG_TAIL))},
+                    {"type": "joinaggregate", "groupby": ["long"], "ops": ["count"], "as": ["n12"]},
+                    {"type": "window", "groupby": ["long"], "ops": ["row_number"], "as": ["k"],
+                     "sort": {"field": ["t_first", "id"], "order": ["ascending", "ascending"]}},
+                    {"type": "formula", "as": "label", "expr": FINAL_LABEL_EXPR},
                 ],
             },
             {
@@ -368,12 +402,20 @@ def waterfall_spec():
                     {"window": [{"op": "row_number", "as": "rank"}],
                      "sort": [{"field": "session_start"}, {"field": "session_line"}, {"field": "session"}, {"field": "seq"}]},
                     # role label: up to MAX_LABEL_DEPTH hops through the subagent links (same as the tree)
-                    # role label: up to MAX_LABEL_DEPTH hops through the subagent links (same as the tree)
                     *[{"calculate": up_expr(f"datum.{src}"), "as": f"p{i + 1}"}
                       for i, src in enumerate(("session", "p1", "p2", "p3"))],
                     {"calculate": level_expr("datum.p1", "datum.p2", "datum.p3", "datum.p4"), "as": "level"},
-                    {"calculate": "slice('00000' + datum.rank, -5) + '\\t' + " + label_expr("datum.session", "datum.level")
-                                  + " + ' #' + datum.seq + '  ' + datum.what", "as": "row"},
+                    {"calculate": label_expr("datum.session", "datum.level"), "as": "base"},
+                    # distinct within the view, same rule as the tree (see LONG_LABEL_EXPR)
+                    {"joinaggregate": [{"op": "distinct", "field": "session", "as": "n6"}], "groupby": ["base"]},
+                    {"calculate": LONG_LABEL_EXPR.format(long=label_expr("datum.session", "datum.level", LONG_TAIL)),
+                     "as": "long"},
+                    {"joinaggregate": [{"op": "distinct", "field": "session", "as": "n12"}], "groupby": ["long"]},
+                    {"window": [{"op": "dense_rank", "as": "k"}], "groupby": ["long"],
+                     "sort": [{"field": "session_start"}, {"field": "session"}]},
+                    {"calculate": FINAL_LABEL_EXPR, "as": "label"},
+                    {"calculate": "slice('00000' + datum.rank, -5) + '\\t' + datum.label"
+                                  " + ' #' + datum.seq + '  ' + datum.what", "as": "row"},
                     {"calculate": f"{s}.status || ({s}.status_code ? 'HTTP ' + {s}.status_code : '')", "as": "status"},
                     {"calculate": f"{s}.tokens ? {s}.tokens.total : null", "as": "tokens"},
                     {"calculate": f"{s}.verify ? {s}.verify.status : ''", "as": "verify"},

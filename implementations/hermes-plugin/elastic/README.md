@@ -323,6 +323,9 @@ Basic-license Kibana (Lens, Vega/Vega-Lite, controls, Discover). It opens on the
   e.g. `parent · …demo-1`, `sub · …d7e34b`, `sub² · …aa11bb` (a subagent's subagent), up to
   `sub⁴⁺`. The role comes from the subagent links in the time range, not from the dashboard
   filters, so a session keeps its label when you filter down to it. Hover for the full id.
+  Labels are distinct within a view: if two sessions would get the same label, both show the
+  last 12 characters instead, and if those match too, ` [1]`, ` [2]`, … in order of session
+  start (then id).
 * **Session tree** (Vega): one node per session, parent on the left, subagents to the right
   (a grandchild goes one level further). The link comes from the child session's **first
   record** (`seq` 0), which carries `parent_session_id` plus `parent_turn_id` /
