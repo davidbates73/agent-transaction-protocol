@@ -539,6 +539,20 @@ class LifecycleDashboardTests(unittest.TestCase):
         tree = self.vega("hermes-atp-lc-session-tree")
         self.assertIn('"errors": {"filter": ' + json.dumps(lifecycle.ERROR_FILTER), json.dumps(tree))
 
+    def test_tree_legend_does_not_cover_labels(self):
+        """QA H4-F4: nodes and their labels (drawn up to 14 px above a parent node) start below a
+        band reserved for the top-left colour legend (legend 4..48 px in an offline render)."""
+        tree = self.vega("hermes-atp-lc-session-tree")
+        (legend,) = tree["legends"]
+        self.assertEqual((legend["orient"], legend["offset"]), ("top-left", 4))
+        self.assertIn({"name": "legendBand", "value": lifecycle.LEGEND_BAND}, tree["signals"])
+        self.assertGreaterEqual(lifecycle.LEGEND_BAND - 14 - 6, 48, "label top clears the legend bottom")
+        (tdata,) = [d for d in tree["data"] if d["name"] == "tree"]
+        kinds = [t["type"] for t in tdata["transform"]]
+        self.assertEqual(kinds, ["stratify", "tree", "formula"])
+        self.assertEqual(tdata["transform"][1]["size"][0], {"signal": "max(10, height - legendBand - 8)"})
+        self.assertEqual(tdata["transform"][2], {"type": "formula", "as": "y", "expr": "datum.y + legendBand"})
+
     def test_colliding_labels_are_disambiguated(self):
         """QA H4-F3: same role + same 6-char tail must still give distinct labels in a view."""
         self.assertEqual(lifecycle.session_label("alpha-abc123", {}), lifecycle.session_label("omega-abc123", {}))

@@ -83,6 +83,7 @@ def es_url(body):
 # parent_session_id links in the time range, NOT from the dashboard filters, so a session keeps
 # its label when you filter down to it. The full session id is in every tooltip.
 LABEL_TAIL = 6
+LEGEND_BAND = 68  # px kept free at the top of the tree for its colour legend (no label under it)
 LONG_TAIL = 12  # used instead when two sessions in the view share role + 6-char tail
 MAX_LABEL_DEPTH = 4
 ROLE_SUFFIX = ["", "²", "³", "⁴⁺"]
@@ -174,6 +175,7 @@ def session_tree_spec():
         "padding": 8,
         "signals": [
             {"name": "labelSpace", "update": "min(360, width * 0.45)"},
+            {"name": "legendBand", "value": LEGEND_BAND},
             {"name": "maxMs", "update": "length(data('shown')) ? extent(pluck(data('shown'), 'ms'))[1] : 0"},
             {"name": "maxTokens", "update": "length(data('shown')) ? extent(pluck(data('shown'), 'n_tokens'))[1] : 0"},
             {"name": "overCap", "update": f"length(data('fetched')) > {TREE_CAP}"},
@@ -263,8 +265,10 @@ def session_tree_spec():
                     {"type": "stratify", "key": "id", "parentKey": "parent"},
                     {"type": "tree", "method": "tidy", "separation": True,
                      "sort": {"field": "t_first", "order": "ascending"},
-                     "size": [{"signal": "height"}, {"signal": "width - labelSpace"}],
+                     "size": [{"signal": "max(10, height - legendBand - 8)"}, {"signal": "width - labelSpace"}],
                      "as": ["y", "x", "depth", "children"]},
+                    # nodes (and the labels drawn 14 px above a parent) start below the legend
+                    {"type": "formula", "as": "y", "expr": "datum.y + legendBand"},
                 ],
             },
             {"name": "links", "source": "tree",
@@ -286,7 +290,7 @@ def session_tree_spec():
         ],
         "legends": [
             {"fill": "color", "type": "gradient", "title": "model + tool ms", "orient": "top-left",
-             "direction": "horizontal", "gradientLength": 120},
+             "direction": "horizontal", "gradientLength": 120, "offset": 4},
         ],
         "marks": [
             {"type": "path", "from": {"data": "links"},
