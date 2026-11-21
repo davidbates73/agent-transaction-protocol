@@ -47,8 +47,10 @@ The month comes from the record's own signed timestamp. Lines that can't be pars
 
 * **Fields:** these are explicit and allowlisted; anything the exporter doesn't know is
   dropped.
-  * Identity: `@timestamp`, `session_id`, `parent_session_id`, `parent_turn_id`,
-    `parent_subagent_id`, `turn_id`, `task_id`, `event`, `seq`, `is_session_start`.
+  * Identity: `@timestamp`, `session_id`, `root_session_id` (the whole request; see
+    [root_session_id](#root_session_id-whole-request-grouping)), `parent_session_id`,
+    `parent_turn_id`, `parent_subagent_id`, `turn_id`, `task_id`, `event`, `seq`,
+    `is_session_start`.
   * Model and tool: `model`, `response_model`, `provider`, `tool_name`, `tool_call_id`,
     `api_request_id`, `status`, `status_code`, `error_type`, `finish_reason`,
     `duration_ms`, `api_duration_ms`, `tokens.{prompt,completion,total,…}`.
@@ -113,7 +115,8 @@ The `setup` service:
 2. Sets the `kibana_system` password.
 3. Creates the **`hermes_exporter`** role and user (write-only), and the **`hermes_viewer`**
    role and user (read-only).
-4. Installs the index template.
+4. Installs the index template, and adds fields introduced later (`root_session_id`) to the
+   mapping of indices that already exist.
 5. Checks that the license is `basic`.
 6. Imports both dashboards (overview, then request lifecycle).
 
@@ -165,7 +168,8 @@ prefix:
   harmless because `_id`s are deterministic.
 * Rotation (the path now names a new file) is handled by draining the old file to EOF and
   then following the new one, carrying session chain state across.
-* Losing or corrupting the state directory only means re-sending, never duplicates.
+* Losing or corrupting the state directory only means re-sending, never duplicates. The
+  session map (`sessions.json`, below) is relearned from the logs.
 
 **Errors.**
 * Per-item 429/5xx responses are retried.
@@ -174,6 +178,71 @@ prefix:
 * Bad credentials, missing privileges or an untrusted certificate are fatal: exit code 3, so
   the journal shows them instead of a silent retry loop.
 * A config error exits with code 1.
+
+### root_session_id (whole-request grouping)
+
+A Hermes request is a top-level session plus the subagent sessions it delegated to, and
+theirs (nested). Only a subagent session's **first record** carries the link
+(`parent_session_id`), so filtering on the parent's `session_id` alone misses its subagents.
+The exporter therefore stamps every document that has a `session_id` with
+**`root_session_id`**: the top-level session reached by following the links child → parent →
+… . A top-level session's `root_session_id` is its own `session_id`. Filter on
+`root_session_id : "<parent session>"` to get the whole request.
+
+* **Export time only.** `records.jsonl`, its signatures and `atp_cli.py verify` are
+  unchanged, and the document `_id` is still the record hash, so re-exporting stays
+  idempotent with no duplicates.
+* **Links are learned only from authentic records** (signature verified) and kept in
+  `state_dir/sessions.json` (mode 0600, written atomically after each acknowledged batch, before
+  the checkpoint). So roots survive restarts, multiple logs and copy-mode re-copies. Before
+  each pass the exporter reads the links in every log's unread lines first, so a subagent is
+  stamped with its full chain even when its parent's link is in another log listed later.
+* **Out of order across runs.** If a link turns up only after some documents were shipped
+  (for example the parent's log is copied in a later run), new documents get the right root
+  at once, and the exporter logs a warning and lists the affected sessions under `restamp` in
+  `sessions.json`. It can't fix the documents already shipped itself, on purpose: its role is
+  `create_doc` only, so a compromised NUC can't rewrite history. Run
+  `exporter/hermes_atp_restamp.py` on us-solebay (below), then
+  `hermes_atp_export.py --config … --restamp-done` on the exporter host to clear the list.
+* **Orphans.** A subagent session whose link was never recorded, or whose first record isn't
+  in any exported log, can't be connected: it is its **own root**, like a top-level session,
+  and shows as a separate request. A child whose parent's own link is missing stops at the
+  parent (the parent is the root). If its link shows up later, the restamp above fixes it.
+* **Cycles** (only possible with corrupt links) can't hang anything: every session on or
+  leading into a cycle gets the smallest session id on the cycle as its root. If a session
+  ever names two different parents, the smaller id wins. Both rules are independent of
+  reading order, so the result is deterministic.
+* **Lines that can't be parsed** have no session and get no `root_session_id`.
+
+**Backfill / restamp (existing indices).** The index template only applies to indices
+created after it, and the exporter only creates documents. For indices written before
+`root_session_id` existed:
+
+```sh
+# on us-solebay, from this directory (prompts for the elastic password; or set
+# HERMES_ES_PASSWORD / --password-file)
+python3 exporter/hermes_atp_restamp.py --es-url https://localhost:9200 --ca-cert certs/ca/ca.crt --dry-run
+python3 exporter/hermes_atp_restamp.py --es-url https://localhost:9200 --ca-cert certs/ca/ca.crt
+```
+
+It (1) adds `root_session_id` to the mapping of every existing `hermes-atp-records-*` index
+(`docker compose run --rm setup` does that too), (2) reads the links from Elasticsearch,
+(3) works out the roots with the exporter's own code and (4) runs `_update_by_query` only for
+documents whose `root_session_id` is missing or wrong. A second run changes nothing. By hand,
+for one request whose sessions you know:
+
+```sh
+curl --cacert certs/ca/ca.crt -u elastic -X PUT "https://localhost:9200/hermes-atp-records-*/_mapping" \
+  -H 'Content-Type: application/json' -d '{"properties":{"root_session_id":{"type":"keyword","ignore_above":1024}}}'
+curl --cacert certs/ca/ca.crt -u elastic -X POST "https://localhost:9200/hermes-atp-records-*/_update_by_query?conflicts=proceed&refresh=true" \
+  -H 'Content-Type: application/json' -d '{"query":{"terms":{"session_id":["<parent>","<child>","<grandchild>"]}},
+  "script":{"source":"ctx._source.root_session_id = params.root","params":{"root":"<parent>"}}}'
+```
+
+Re-exporting with a cleared `state_dir` produces the same `_id`s, so it stamps
+`root_session_id` only into **new** indices (for example after deleting the old ones, or with
+a different `index_prefix`): into existing indices every `create` is a 409 and the old
+documents stay as they were.
 
 ### Configuration
 
@@ -309,11 +378,13 @@ Dashboards → **Hermes ATP request lifecycle** follows one request end to end: 
 session plus the subagent sessions it delegated to (`delegate_task`). Everything on it is free
 Basic-license Kibana (Lens, Vega/Vega-Lite, controls, Discover). It opens on the last 24 hours.
 
-* **Controls** (top row): **Session**, **Turn** and **Event** options lists. They filter every
-  panel, Vega included. To see a whole request, pick the parent session *and* its child
-  sessions in **Session** (the tree's tooltips list each child's parent), or narrow the time
-  range to the request. Picking only the parent shows only the parent: a child session's
-  records don't carry the parent's id, only its first record does (see below).
+* **Controls** (top row): **Root session (whole request)**, **Session**, **Turn** and
+  **Event** options lists. They filter every panel, Vega included. Pick a top-level session in
+  **Root session** to see the whole request: the parent plus all of its subagents, nested ones
+  included (it filters on `root_session_id`, see
+  [root_session_id](#root_session_id-whole-request-grouping)). **Session** then narrows to
+  single sessions within it. Records exported before `root_session_id` existed only show up
+  under **Root session** after the backfill.
 * **Tiles:** tokens (`tokens.total`), elapsed (first → last record), model time
   (`api_duration_ms`), tool time (`duration_ms`), failed steps (`api_request_error`,
   `post_tool_call` whose `status` isn't `ok`, or any record with an `error_type`; the tree's
@@ -494,7 +565,14 @@ bash implementations/run-all.sh          # includes these suites
   * no credentials in any output;
   * config precedence and refusals;
   * HTTPS with a CA, and an untrusted certificate being fatal;
-  * ingest verify vs `verify_log` on every vector.
+  * ingest verify vs `verify_log` on every vector;
+  * `root_session_id`, with records from the real recorder: a parent with two subagents, a
+    nested chain three deep, an orphan; log, `_id`s and `verify` unchanged; idempotent
+    re-export (same state, cleared state, re-copy, fresh index); a child's log processed
+    before its parent's; a parent link arriving in a later run (flagged, fixed by the restamp
+    plan, same result as one in-order run, `--restamp-done`); the session map surviving
+    restarts and being relearned when lost; forged links ignored; cycles and conflicting
+    links.
 * `test_assets.py` checks:
   * the vendored `atp_log.py` is byte-identical;
   * every emitted field is mapped;
@@ -528,6 +606,13 @@ bash implementations/run-all.sh          # includes these suites
     Import, export and re-import with no missing references; every panel rendering with no
     errors in headless Chrome as `hermes_viewer`, including after picking sessions in the
     Session control.
+  * `root_session_id`: setup re-run adding the field to an existing index, then
+    `hermes_atp_restamp.py` backfilling 47 old documents (second run: nothing to do); a fresh
+    index stamped by the exporter, then two more exports (same state, cleared state) with the
+    document count unchanged; a parent's log copied in after its subagents' log (exporter
+    warns, restamp fixes 12 documents); picking only the parent in **Root session** shows the
+    parent with all its subagents, nested included, for the real-Hermes and the harness
+    requests.
 
 ## Backlog (priority order)
 

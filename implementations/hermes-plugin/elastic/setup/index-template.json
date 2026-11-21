@@ -46,6 +46,10 @@
           "type": "keyword",
           "ignore_above": 1024
         },
+        "root_session_id": {
+          "type": "keyword",
+          "ignore_above": 1024
+        },
         "parent_session_id": {
           "type": "keyword",
           "ignore_above": 1024

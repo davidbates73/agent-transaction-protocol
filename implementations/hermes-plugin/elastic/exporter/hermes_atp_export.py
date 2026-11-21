@@ -14,6 +14,10 @@ with the ATP reference verifier (atp_log.check_line / chain_step, the same code 
     the buffer and memory stays bounded. Hermes is never touched.
   * Modes: "push" (default) follows the live log forever; "copy" processes copied files to
     EOF once and exits (for logs rsync'ed from the Hermes host).
+  * Request grouping: every document with a session gets root_session_id, the top-level session
+    reached through the subagent links (parentSessionId on a child's records). Export-time only:
+    the log, its signatures and the document _ids are untouched. The links are kept in
+    <state_dir>/sessions.json. See SessionMap and README "root_session_id".
 
 Usage:
     hermes_atp_export.py [--config FILE] [--mode push|copy] [--log PATH ...] [--once]
@@ -216,8 +220,12 @@ class ESClient:
             self.ctx.minimum_version = ssl.TLSVersion.TLSv1_2
 
     def bulk(self, body: bytes) -> dict:
-        req = urllib.request.Request(self.url + "/_bulk", data=body, method="POST", headers={
-            "Content-Type": "application/x-ndjson", "Accept": "application/json",
+        return self.request("POST", "/_bulk", body, content_type="application/x-ndjson")
+
+    def request(self, method: str, path: str, body: Optional[bytes] = None,
+                content_type: str = "application/json") -> dict:
+        req = urllib.request.Request(self.url + path, data=body, method=method, headers={
+            "Content-Type": content_type, "Accept": "application/json",
             "Authorization": self._auth, "User-Agent": f"hermes-atp-export/{VERSION}",
         })
         try:
@@ -233,7 +241,7 @@ class ESClient:
                 raise FatalError(f"Elasticsearch refused the credentials or privileges (HTTP {status})") from None
             if status == 429 or status >= 500:
                 raise TransientError(f"HTTP {status}") from None
-            raise FatalError(f"bulk request rejected (HTTP {status})") from None
+            raise FatalError(f"{method} {path.split('?')[0]} rejected (HTTP {status})") from None
         except (urllib.error.URLError, socket.timeout, ConnectionError, ssl.SSLError, OSError) as e:
             reason = getattr(e, "reason", e)
             if isinstance(reason, ssl.SSLCertVerificationError):
@@ -324,6 +332,126 @@ def build_document(raw: bytes, checked: dict, chain_problems: List[tuple], *, in
 
 
 # ---------------------------------------------------------------------------------------
+# request grouping: session -> parent session -> ... -> root
+# ---------------------------------------------------------------------------------------
+
+def resolve_root(session_id: str, parents: Dict[str, str]) -> str:
+    """The top-level session for session_id, following child -> parent links. Where no link is
+    known the chain stops (a session with no parent link is its own root -- including a subagent
+    whose link was never recorded or not exported). A cycle (only possible with corrupt links)
+    resolves to the smallest session id on the cycle, so every session on it, and every session
+    leading into it, gets the same answer whichever one is asked first."""
+    path: List[str] = []
+    seen: Dict[str, int] = {}
+    cur = session_id
+    while True:
+        if cur in seen:
+            return min(path[seen[cur]:])
+        seen[cur] = len(path)
+        path.append(cur)
+        nxt = parents.get(cur)
+        if not nxt:
+            return cur
+        cur = nxt
+
+
+def record_link(node) -> Optional[Tuple[str, str]]:
+    """(session, parent session) carried by a record (the recorder puts parentSessionId on a
+    subagent session's first record), or None."""
+    if not isinstance(node, dict) or not isinstance(node.get("scope"), str):
+        return None
+    h = node.get("hermes")
+    parent = h.get("parentSessionId") if isinstance(h, dict) else None
+    if isinstance(parent, str) and parent and len(parent) <= 1024 and len(node["scope"]) <= 1024:
+        return node["scope"], parent
+    return None
+
+
+class SessionMap:
+    """Persistent session -> parent links (<state_dir>/sessions.json, shared by all sources).
+
+    Only links from authentic records (signature verified) are learned. If a session ever shows
+    two different parents the smaller id wins, so the result doesn't depend on reading order.
+    `stamped` remembers the root last written on each session's documents; when a link learned
+    later changes that root (the parent's own link turned up in another file or a later copy)
+    the session is listed under `restamp`. The exporter only creates documents (its role has no
+    update privilege, by design), so those already-shipped documents are fixed by
+    hermes_atp_restamp.py, run with admin credentials on the Elasticsearch host."""
+
+    VERSION = 1
+
+    def __init__(self, state_dir: str):
+        self.path = os.path.join(state_dir, "sessions.json")
+        self.parents: Dict[str, str] = {}
+        self.stamped: Dict[str, str] = {}
+        self.restamp: Dict[str, str] = {}
+        self.loaded = False
+        self.dirty = False
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                st = json.load(f)
+            if st.get("version") != self.VERSION:
+                raise ValueError("unknown version")
+            self.parents = {str(k): str(v) for k, v in st.get("parents", {}).items()}
+            self.stamped = {str(k): str(v) for k, v in st.get("stamped", {}).items()}
+            self.restamp = {str(k): str(v) for k, v in st.get("restamp", {}).items()}
+            self.loaded = True
+        except FileNotFoundError:
+            pass
+        except Exception:  # noqa: BLE001 -- unreadable: relearn the links from the logs
+            log.warning("session map %s unreadable; relearning subagent links from the logs", self.path)
+
+    def root(self, session_id: str) -> str:
+        return resolve_root(session_id, self.parents)
+
+    def learn(self, child: str, parent: str) -> bool:
+        old = self.parents.get(child)
+        if old == parent:
+            return False
+        if old is not None:
+            log.warning("session %s names two parent sessions (%s, %s); using the smaller id", child, old, parent)
+            parent = min(old, parent)
+            if parent == old:
+                return False
+        self.parents[child] = parent
+        self.dirty = True
+        for sid, was in list(self.stamped.items()):
+            now = self.root(sid)
+            if now != was:
+                self.stamped[sid] = now
+                if self.restamp.get(sid) != now:
+                    self.restamp[sid] = now
+                    log.warning("session %s: its root is now %s (was %s on documents already shipped); run "
+                                "hermes_atp_restamp.py to update them (README: root_session_id)", sid, now, was)
+        return True
+
+    def stamp(self, session_id: str) -> str:
+        root = self.root(session_id)
+        if self.stamped.get(session_id) != root:
+            self.stamped[session_id] = root
+            self.dirty = True
+        return root
+
+    def clear_restamp(self):
+        if self.restamp:
+            self.restamp = {}
+            self.dirty = True
+
+    def save(self, force: bool = False):
+        if not (self.dirty or force):
+            return
+        tmp = self.path + ".tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"version": self.VERSION, "parents": self.parents, "stamped": self.stamped,
+                       "restamp": self.restamp}, f, separators=(",", ":"), sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self.path)
+        self.dirty = False
+
+
+# ---------------------------------------------------------------------------------------
 # checkpointed, read-only file source
 # ---------------------------------------------------------------------------------------
 
@@ -351,6 +479,7 @@ class Source:
         self.ident: Optional[Tuple[int, int]] = None
         self.prefix = hashlib.sha256()  # running sha256 of bytes [0, state["offset"])
         self.state = self._load_state()
+        self.scanned_to = 0  # subagent links already learned from [0, scanned_to) of the open file
 
     def _fresh_state(self) -> dict:
         return {"path": self.path, "offset": 0, "line": 0, "prefix_sha256": hashlib.sha256().hexdigest(),
@@ -424,6 +553,24 @@ class Source:
             self.state = self._fresh_state()
             self.state["resets"] = resets
             self.prefix = hashlib.sha256()
+            self.scanned_to = 0
+
+    def scan_lines(self, start: int):
+        """Yield (end_offset, line) for every complete line from start to EOF, in bounded chunks."""
+        pos, buf, off = start, b"", start
+        while True:
+            chunk = os.pread(self.fd, 1 << 20, pos)
+            if not chunk:
+                return
+            pos += len(chunk)
+            buf += chunk
+            while True:
+                nl = buf.find(b"\n")
+                if nl < 0:
+                    break
+                line, buf = buf[:nl], buf[nl + 1:]
+                off += nl + 1
+                yield off, line
 
     def read_lines(self, max_lines: int, max_bytes: int) -> List[Tuple[int, bytes]]:
         """Complete lines (ending in \\n) from the checkpoint offset: [(offset, line_bytes)].
@@ -462,6 +609,7 @@ class Source:
         if self.fd is not None:
             os.close(self.fd)
             self.fd = None
+        self.scanned_to = 0
 
 
 # ---------------------------------------------------------------------------------------
@@ -477,10 +625,39 @@ class Exporter:
             self.public_key = atp_log.load_public_key(f.read())
         os.makedirs(cfg.state_dir, mode=0o700, exist_ok=True)
         self.sources = [Source(p, cfg.state_dir) for p in cfg.logs]
+        self.sessions = SessionMap(cfg.state_dir)
         self.dead_letter = os.path.join(cfg.state_dir, "dead-letter.jsonl")
         self.stopping = False
         self.stats = {"shipped": 0, "duplicates": 0, "dead_lettered": 0, "batches": 0, "retries": 0,
-                      "invalid": 0}
+                      "invalid": 0, "restamp_pending": len(self.sessions.restamp)}
+
+    # -- subagent links -------------------------------------------------------------
+    def _learn(self, checked) -> None:
+        if checked["intact"]:
+            link = record_link(checked["node"])
+            if link:
+                self.sessions.learn(*link)
+
+    def learn_links(self) -> None:
+        """Before shipping, learn the subagent links in every source's not-yet-scanned lines, so
+        a session is stamped with its full chain even when its parent's link sits in another
+        log (or later in a log processed after it). Without a usable session map (first run,
+        or the file was lost) the already-shipped part is scanned too, so later documents of
+        known sessions keep their roots."""
+        for src in self.sources:
+            if not src.open():
+                continue
+            start = src.scanned_to if self.sessions.loaded else 0
+            if self.sessions.loaded:
+                start = max(start, src.state["offset"])
+            end = start
+            for end, raw in src.scan_lines(start):
+                if b'"parentSessionId"' not in raw:
+                    continue
+                self._learn(atp_log.check_line(raw.decode("utf-8", errors="replace"), self.public_key))
+            src.scanned_to = max(src.scanned_to, end)
+        self.sessions.loaded = True
+        self.stats["restamp_pending"] = len(self.sessions.restamp)
 
     # -- one batch ------------------------------------------------------------------
     def _docs(self, src: Source, lines: List[Tuple[int, bytes]]):
@@ -488,16 +665,20 @@ class Exporter:
         prefix = src.prefix.copy()
         items = []
         line_no = src.state["line"]
-        for off, raw in lines:
+        # links first (a batch may hold a child's first record and more of its records)
+        checks = [atp_log.check_line(raw.decode("utf-8", errors="replace"), self.public_key) for _off, raw in lines]
+        for checked in checks:
+            self._learn(checked)
+        for (off, raw), checked in zip(lines, checks):
             line_no += 1
-            text = raw.decode("utf-8", errors="replace")
-            checked = atp_log.check_line(text, self.public_key)
             chain_problems = []
             if checked["node"] is not None and checked["scope"] is not None:
                 chain_problems = atp_log.chain_step(chain, checked["node"], None)
             index, doc_id, doc = build_document(raw, checked, chain_problems, index_prefix=self.cfg.index_prefix,
                                                 source=src.path, offset=off, line=line_no,
                                                 ship_bodies=self.cfg.ship_bodies, prefix_sha256=prefix.hexdigest())
+            if isinstance(doc.get("session_id"), str):
+                doc["root_session_id"] = self.sessions.stamp(doc["session_id"])
             prefix.update(raw + b"\n")
             if not doc["verify"]["valid"]:
                 self.stats["invalid"] += 1
@@ -578,6 +759,8 @@ class Exporter:
                 break
             items, chain, prefix = self._docs(src, lines)
             self._ship(items)
+            self.sessions.save()  # before the checkpoint: a re-read after a crash re-learns nothing new
+            self.stats["restamp_pending"] = len(self.sessions.restamp)
             last_off, last_raw = lines[-1]
             src.commit(last_off + len(last_raw) + 1, len(lines), chain, prefix)
             total += len(lines)
@@ -592,6 +775,8 @@ class Exporter:
                 for src in self.sources:
                     if not once and src.fd is not None and src.path_replaced():
                         self.rotate(src)
+                self.learn_links()
+                for src in self.sources:
                     self.process_source(src)
                 if once:
                     break
@@ -601,6 +786,11 @@ class Exporter:
         finally:
             for src in self.sources:
                 src.close()
+        self.sessions.save()
+        if self.sessions.restamp:
+            log.warning("%d session(s) have documents shipped with an outdated root_session_id; run "
+                        "hermes_atp_restamp.py on the Elasticsearch host, then hermes_atp_export.py --restamp-done",
+                        len(self.sessions.restamp))
         log.info("done: %s", json.dumps(self.stats))
         return 0
 
@@ -627,6 +817,8 @@ def main(argv=None) -> int:
     ap.add_argument("--ship-bodies", action="store_true", default=None,
                     help="also ship inputBody/outputBody when the recorder logged them")
     ap.add_argument("--check-config", action="store_true", help="print the resolved config (secrets masked) and exit")
+    ap.add_argument("--restamp-done", action="store_true",
+                    help="forget the sessions listed for re-stamping (after hermes_atp_restamp.py ran) and exit")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
@@ -639,6 +831,14 @@ def main(argv=None) -> int:
         return 1
     if a.check_config:
         print(json.dumps(cfg.masked(), indent=2))
+        return 0
+    if a.restamp_done:
+        sm = SessionMap(cfg.state_dir)
+        n = len(sm.restamp)
+        sm.clear_restamp()
+        if n:
+            sm.save()
+        print(f"cleared {n} session(s) from the re-stamp list")
         return 0
     exporter = Exporter(cfg)
 

@@ -641,11 +641,24 @@ class LifecycleDashboardTests(unittest.TestCase):
         self.assertEqual(verify["layers"][lifecycle.LAYER]["columns"]["v"]["params"]["formula"],
                          "count(kql='verify.valid : true') / count()")
 
+    def test_root_session_field_is_mapped_everywhere(self):
+        self.assertEqual(FIELDS["root_session_id"], {"type": "keyword", "ignore_above": 1024})
+        setup = read("setup", "setup.sh")
+        self.assertIn('hermes-atp-records-*/_mapping?allow_no_indices=true', setup)
+        self.assertIn('{"properties":{"root_session_id":{"type":"keyword","ignore_above":1024}}}', setup)
+        sys.path.insert(0, os.path.join(ELASTIC, "exporter"))
+        import hermes_atp_restamp as hr
+        self.assertEqual(hr.MAPPING["properties"]["root_session_id"], FIELDS["root_session_id"])
+        readme = read("README.md")
+        for s in ("### root_session_id (whole-request grouping)", "**Orphans.**", "hermes_atp_restamp.py",
+                  "_update_by_query", "--restamp-done"):
+            self.assertIn(s, readme)
+
     def test_controls(self):
         group = self.dash["attributes"]["controlGroupInput"]
         controls = json.loads(group["panelsJSON"])
         self.assertEqual([c["explicitInput"]["fieldName"] for c in sorted(controls.values(), key=lambda c: c["order"])],
-                         ["session_id", "turn_id", "event"])
+                         ["root_session_id", "session_id", "turn_id", "event"])
         refs = {r["name"]: r for r in self.dash["references"]}
         for cid, c in controls.items():
             self.assertEqual(c["type"], "optionsListControl")

@@ -114,6 +114,13 @@ r=$(req PUT "$ES_URL/_index_template/hermes-atp-records" -H 'Content-Type: appli
     --data-binary "@$HERE/index-template.json")
 expect_2xx "index template hermes-atp-records" "$r"
 
+# The template only shapes indices created after it. Add fields introduced later to the
+# indices that already exist (additive, so safe to repeat). Documents already in them get the
+# value from exporter/hermes_atp_restamp.py (README "root_session_id").
+r=$(req PUT "$ES_URL/hermes-atp-records-*/_mapping?allow_no_indices=true" -H 'Content-Type: application/json' \
+    --data-binary '{"properties":{"root_session_id":{"type":"keyword","ignore_above":1024}}}')
+expect_2xx "root_session_id mapping on existing hermes-atp-records-* indices" "$r"
+
 r=$(req GET "$ES_URL/_license")
 lic=$(body_of "$r" | grep -o '"type" *: *"[a-z]*"' | head -n1 | sed 's/.*"\([a-z]*\)"$/\1/')
 [ "$lic" = basic ] || die "license type is '$lic', expected 'basic' (this stack must not use trial/paid features)"

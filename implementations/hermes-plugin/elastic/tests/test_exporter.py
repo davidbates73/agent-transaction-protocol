@@ -632,6 +632,222 @@ class TLSTests(Base):
         self.assertEqual(self.tls.docs, {})
 
 
+# --- root_session_id ---------------------------------------------------------------------
+
+sys.path.insert(0, os.path.join(PLUGIN, "tests"))
+import hermes_atp_restamp as hr  # noqa: E402
+
+
+def record_sessions(log_path, script, *, start=None):
+    """Record sessions with the REAL recorder (fake-Hermes host, TEST-ONLY key, so the exporter's
+    PUB verifies them). script: [(session, parent or None), ...]; a child gets its link the way
+    Hermes v0.23.1 delivers it (subagent_start, so only on the child's first record). Every
+    session makes two model calls and a tool call."""
+    import support as S
+    import fake_hermes
+    work = os.path.dirname(log_path)
+    key = os.path.join(work, "TEST-ONLY-key.json")
+    if not os.path.exists(key):
+        with open(key, "w") as f:
+            json.dump({"warning": "TEST ONLY", "alg": "Ed25519", "seedHex": S.TEST_SEED_HEX}, f)
+        os.chmod(key, 0o600)
+    env = {"HERMES_ATP_HOME": work, "HERMES_ATP_KEY": key, "HERMES_ATP_PUB": key + ".pub",
+           "HERMES_ATP_LOG": log_path}
+    mod = fake_hermes.load_plugin(S.PLUGIN)
+    rec_mod = S.recorder_module(mod)
+    mod._recorder = rec_mod.Recorder(rec_mod.Config.from_environment(env), clock=S.TickClock(start or S.VECTOR_EPOCH))
+    host = fake_hermes.FakeHermes()
+    host.load(mod)
+    for sid, parent in script:
+        if parent:
+            host.subagent_start(parent, "turn-1", sid, "sa-" + sid, secrets=False)
+        host.api_call(sid, "turn-1", "r1-" + sid, 1, tool_calls=1, task="sa-" + sid if parent else None,
+                      secrets=False)
+        host.tool_call(sid, "turn-1", "r1-" + sid, "c1-" + sid, "read_file", {"path": "x"}, '{"ok": 1}')
+        host.api_call(sid, "turn-1", "r2-" + sid, 2, secrets=False)
+    with open(log_path, "rb") as f:
+        return f.read()
+
+
+TREE = [("req-p", None), ("sub-a", "req-p"), ("sub-b", "req-p"), ("sub-a1", "sub-a"), ("sub-a1x", "sub-a1"),
+        ("orphan-o", None), ("req-t", None)]
+WANT = {"req-p": "req-p", "sub-a": "req-p", "sub-b": "req-p", "sub-a1": "req-p", "sub-a1x": "req-p",
+        "orphan-o": "orphan-o", "req-t": "req-t"}
+
+
+class RootSessionTests(Base):
+    def docs(self, es=None):
+        return {k[1]: d for k, d in (es or self.es).docs.items()}
+
+    def roots(self, es=None):
+        out = {}
+        for d in self.docs(es).values():
+            if d.get("session_id") is not None:
+                out.setdefault(d["session_id"], set()).add(d.get("root_session_id"))
+        return out
+
+    def assert_roots(self, want, es=None):
+        self.assertEqual(self.roots(es), {s: {r} for s, r in want.items()})
+
+    def test_parent_with_two_subagents_nested_and_orphan(self):
+        data = record_sessions(self.log_path, TREE)
+        ex = self.exporter()
+        ex.run()
+        self.assertEqual(len(self.es.docs), data.count(b"\n"))
+        self.assert_roots(WANT)
+        # the link is only on the child's first record, yet every record of the child is stamped
+        firsts = [d for d in self.docs().values() if d.get("parent_session_id")]
+        self.assertEqual(sorted(d["session_id"] for d in firsts), ["sub-a", "sub-a1", "sub-a1x", "sub-b"])
+        self.assertTrue(all(d["seq"] == 0 for d in firsts))
+        self.assertEqual(ex.stats["restamp_pending"], 0)
+
+    def test_export_time_only_records_ids_and_verify_unchanged(self):
+        data = record_sessions(self.log_path, TREE)
+        before = hashlib.sha256(data).hexdigest()
+        self.exporter().run()
+        self.assertEqual(hashlib.sha256(slurp(self.log_path, "rb")).hexdigest(), before, "log untouched")
+        ref = atp_log.verify_log(data, atp_log.load_public_key(slurp(PUB)))
+        self.assertEqual(ref["errors"], [], "the recorder's log still verifies")
+        for doc_id, d in self.docs().items():
+            self.assertEqual(doc_id, d["record_hash"], "_id is still the record hash")
+            self.assertTrue(d["verify"]["valid"])
+
+    def test_reexport_is_idempotent(self):
+        data = record_sessions(self.log_path, TREE)
+        self.exporter().run()
+        first = {k: dict(v) for k, v in self.docs().items()}
+        ex = self.exporter()
+        ex.run()  # same state: nothing to send
+        self.assertEqual(ex.stats["shipped"] + ex.stats["duplicates"], 0)
+        shutil.rmtree(os.path.join(self.tmp, "state"))
+        ex = self.exporter()
+        ex.run()  # cleared state: everything again, all 409
+        self.assertEqual((ex.stats["shipped"], ex.stats["duplicates"]), (0, data.count(b"\n")))
+        os.replace(self.log_path, self.log_path + ".old")  # copy mode: a re-copy (new inode)
+        shutil.copy(self.log_path + ".old", self.log_path)
+        ex = self.exporter()
+        ex.run()
+        self.assertEqual(ex.stats["shipped"], 0)
+        self.assertEqual(set(self.docs()), set(first))
+        for k, d in self.docs().items():
+            self.assertEqual(d["root_session_id"], first[k]["root_session_id"])
+        # and a fresh index gets identical _ids and roots from a cleared state
+        with FakeES(auth=AUTH) as es2:
+            shutil.rmtree(os.path.join(self.tmp, "state"))
+            self.exporter(es_url=es2.url).run()
+            self.assertEqual(set(self.docs(es2)), set(first))
+            self.assert_roots(WANT, es2)
+
+    def split_logs(self):
+        """log1: req-p with sub-a and sub-b. log2 (another Hermes home, same key): sub-a1 (child of
+        sub-a, whose link is only in log1) and sub-a1x (child of sub-a1)."""
+        d2 = os.path.join(self.tmp, "home2")
+        os.makedirs(d2)
+        log2 = os.path.join(d2, "records.jsonl")
+        record_sessions(self.log_path, TREE[:3])
+        record_sessions(log2, [("sub-a1", "sub-a"), ("sub-a1x", "sub-a1")], start=1794790000)
+        return log2
+
+    def test_child_log_before_parent_log_in_one_run(self):
+        log2 = self.split_logs()
+        ex = self.exporter(logs=[log2, self.log_path])  # the child's log is processed first
+        ex.run()
+        self.assert_roots({s: WANT[s] for s in ("req-p", "sub-a", "sub-b", "sub-a1", "sub-a1x")})
+        self.assertEqual(ex.stats["restamp_pending"], 0)
+
+    def test_parent_link_arriving_in_a_later_run_is_flagged_and_restamped(self):
+        log2 = self.split_logs()
+        ex = self.exporter(logs=[log2])  # copy mode: only the child log has arrived
+        ex.run()
+        self.assert_roots({"sub-a1": "sub-a", "sub-a1x": "sub-a"})  # best known: stops at sub-a
+        ex = self.exporter(logs=[log2, self.log_path])  # parent log copied in later
+        ex.run()
+        self.assertEqual(ex.stats["restamp_pending"], 2)
+        sm = hx.SessionMap(os.path.join(self.tmp, "state"))
+        self.assertEqual(sm.restamp, {"sub-a1": "req-p", "sub-a1x": "req-p"})
+        # the restamp tool's plan, from what is in the index (links + current roots) ...
+        docs = list(self.docs().values())
+        links = {(d["session_id"], d["parent_session_id"]) for d in docs
+                 if d.get("parent_session_id") and d["verify"]["authentic"]}
+        current = {(d["session_id"], d.get("root_session_id")) for d in docs}
+        todo = hr.plan(links, current)
+        self.assertEqual(todo, {"req-p": ["sub-a1", "sub-a1x"]})
+        for d in docs:  # ... applied like its _update_by_query
+            for root, sessions in todo.items():
+                if d["session_id"] in sessions:
+                    d["root_session_id"] = root
+        self.assert_roots({s: WANT[s] for s in ("req-p", "sub-a", "sub-b", "sub-a1", "sub-a1x")})
+        current = {(d["session_id"], d.get("root_session_id")) for d in docs}
+        self.assertEqual(hr.plan(links, current), {}, "a second restamp changes nothing")
+        # deterministic: same final state as one in-order run into a fresh index
+        with FakeES(auth=AUTH) as es2:
+            hx.Exporter(self.cfg(es_url=es2.url, logs=[self.log_path, log2],
+                                 state_dir=os.path.join(self.tmp, "s2")), sleep=lambda s: None).run()
+            self.assertEqual({k: d["root_session_id"] for k, d in self.docs(es2).items()},
+                             {k: d["root_session_id"] for k, d in self.docs().items()})
+        # --restamp-done clears the list
+        cfgfile = os.path.join(self.tmp, "c.json")
+        with open(cfgfile, "w") as f:
+            json.dump({"es_url": self.es.url, "allow_insecure_http": True, "username": "hermes_exporter",
+                       "password": PASSWORD, "pub": PUB, "state_dir": os.path.join(self.tmp, "state")}, f)
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(hx.main(["--config", cfgfile, "--restamp-done"]), 0)
+        self.assertIn("cleared 2", out.getvalue())
+        self.assertEqual(hx.SessionMap(os.path.join(self.tmp, "state")).restamp, {})
+
+    def test_session_map_persists_across_restarts(self):
+        data = record_sessions(self.log_path, TREE)
+        lines = data.splitlines(keepends=True)
+        # cut right after sub-a's first record: its later records arrive after a restart
+        cut = next(i for i, l in enumerate(lines) if b'"scope":"sub-a"' in l and b'"parentSessionId"' in l) + 1
+        self.write(b"".join(lines[:cut]))
+        self.exporter().run()
+        state = os.path.join(self.tmp, "state", "sessions.json")
+        self.assertEqual(os.stat(state).st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(slurp(state))["parents"], {"sub-a": "req-p"})
+        self.write(b"".join(lines))  # appended
+        self.exporter().run()        # new process: the link comes from sessions.json only
+        self.assert_roots(WANT)
+        # a lost session map is relearned from the logs (already-shipped part included)
+        os.remove(state)
+        with open(self.log_path, "ab") as f:
+            f.write(record_sessions(os.path.join(self.tmp, "more.jsonl"), [("sub-c", "req-p")],
+                                    start=1794795000))
+        self.exporter().run()
+        roots = self.roots()
+        self.assertEqual(roots["sub-c"], {"req-p"})
+        self.assertEqual(json.loads(slurp(state))["parents"]["sub-a1x"], "sub-a1")
+
+    def test_only_authentic_links_count_and_unparseable_lines_get_no_root(self):
+        import support as S
+        data = record_sessions(self.log_path, TREE[:2])
+        lines = data.split(b"\n")[:-1]
+        i = next(i for i, l in enumerate(lines) if b'"parentSessionId"' in l)
+        forged = S.edit_one_byte(data, i)  # the child's first record no longer verifies
+        self.write(forged + b"{not json\n")
+        self.exporter().run()
+        roots = self.roots()
+        self.assertEqual(roots["req-p"], {"req-p"})
+        self.assertEqual(roots["sub-a"], {"sub-a"}, "a forged link is not followed: own root")
+        broken = [d for d in self.docs().values() if d.get("session_id") is None]
+        self.assertEqual(len(broken), 1)
+        self.assertNotIn("root_session_id", broken[0])
+
+    def test_resolve_root_cycles_orphans_and_conflicts(self):
+        cyc = {"a": "b", "b": "c", "c": "a", "d": "b", "s": "s"}
+        for sid in ("a", "b", "c", "d"):
+            self.assertEqual(hx.resolve_root(sid, cyc), "a", sid)
+        self.assertEqual(hx.resolve_root("s", cyc), "s", "self link")
+        self.assertEqual(hx.resolve_root("x", cyc), "x", "no link: own root")
+        self.assertEqual(hx.resolve_root("k", {"k": "gone"}), "gone", "stops at the last known session")
+        sm = hx.SessionMap(self.tmp)
+        sm.learn("k", "p2")
+        sm.learn("k", "p1")
+        sm.learn("k", "p3")
+        self.assertEqual(sm.parents, {"k": "p1"}, "two parents: the smaller id, whatever the order")
+        self.assertEqual(hr.plan([("k", "p2"), ("k", "p1")], [("k", None), ("p1", "p1")]), {"p1": ["k"]})
+
+
 class IncrementalVerifyTests(Base):
     """The per-document verify status agrees with `atp_cli.py verify` (atp_log.verify_log)."""
 

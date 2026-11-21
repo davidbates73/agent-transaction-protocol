@@ -597,7 +597,10 @@ def tiles():
 
 
 # --- controls ----------------------------------------------------------------------------------
-CONTROLS = [("session_id", "Session", "large"), ("turn_id", "Turn", "medium"), ("event", "Event", "small")]
+# Root session first: picking one top-level session pulls in all of its subagents (nested too),
+# because every record carries root_session_id. Session narrows to single sessions within it.
+CONTROLS = [("root_session_id", "Root session (whole request)", "large"), ("session_id", "Session", "medium"),
+            ("turn_id", "Turn", "medium"), ("event", "Event", "small")]
 
 
 def control_group():
