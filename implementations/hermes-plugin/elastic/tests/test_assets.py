@@ -438,17 +438,19 @@ class LifecycleDashboardTests(unittest.TestCase):
         (u,) = es_urls(spec)
         self.assertNotIn("format", spec["data"], "whole response: hits plus the label-links aggregation")
         flat_ = [t for t in spec["transform"] if "flatten" in t]
-        self.assertEqual(flat_, [{"flatten": ["hits.hits"], "as": ["hit"]}])
+        self.assertEqual(flat_, [{"flatten": ["hit_list"], "as": ["hit"]}])
+        steps = spec["layer"][0]
+        self.assertEqual(steps["transform"][0], {"filter": "isValid(datum.hit)"}, "drop the empty-range placeholder")
         src = set(u["body"]["_source"])
         for f in ("@timestamp", "session_id", "seq", "event", "duration_ms", "api_duration_ms", "tool_name", "model",
                   "status", "tokens.total", "tool_call_id", "api_request_id"):
             self.assertIn(f, src)
-        layers = [l["mark"]["type"] for l in spec["layer"]]
-        self.assertEqual(layers, ["bar", "point"])
-        self.assertEqual(spec["layer"][0]["encoding"]["x2"], {"field": "end"})
-        tips = {t["title"] for t in spec["encoding"]["tooltip"]}
+        layers = [l["mark"]["type"] for l in steps["layer"]]
+        self.assertEqual(layers, ["bar", "point", "point"])
+        self.assertEqual(steps["layer"][0]["encoding"]["x2"], {"field": "end"})
+        tips = {t["title"] for t in steps["encoding"]["tooltip"]}
         self.assertTrue({"tool / model", "status", "tokens", "duration ms"} <= tips)
-        self.assertEqual(set(spec["encoding"]["color"]["scale"]["domain"]) - {"started, no completion"},
+        self.assertEqual(set(steps["encoding"]["color"]["scale"]["domain"]) - {"started, no completion"},
                          {"post_api_request", "post_tool_call", "api_request_error"})
 
     def test_session_labels(self):
@@ -466,7 +468,7 @@ class LifecycleDashboardTests(unittest.TestCase):
             self.assertNotIn("slice(datum.session, -12)", spec_text)
         # the full id stays in the tooltips
         self.assertIn("'session': datum.id", tree_text)
-        self.assertIn({"field": "session", "title": "session"}, wf["encoding"]["tooltip"])
+        self.assertIn({"field": "session", "title": "session"}, wf["layer"][0]["encoding"]["tooltip"])
         # links for the labels: subagent first records in the time range, NOT the dashboard filters
         links = [d for d in tree["data"] if d["name"] == "linkdocs"][0]["url"]
         self.assertEqual(links, lifecycle.LINKS_URL)
@@ -476,10 +478,65 @@ class LifecycleDashboardTests(unittest.TestCase):
         self.assertEqual(agg["global"], {})
         self.assertEqual(agg["aggs"]["f"]["filter"], lifecycle.LINKS_BODY["query"])
         # role levels: same number of hops in both specs
-        self.assertEqual([t["as"] for t in wf["transform"] if re.fullmatch(r"p\d", str(t.get("as", "")))],
+        self.assertEqual([t["as"] for t in wf["layer"][0]["transform"] if re.fullmatch(r"p\d", str(t.get("as", "")))],
                          ["p1", "p2", "p3", "p4"])
         self.assertEqual(sum(1 for d in tree["data"] for t in d.get("transform", []) if t["type"] == "lookup"
                              and t["from"] == "linkdocs"), lifecycle.MAX_LABEL_DEPTH)
+
+    def test_caps_and_overflow_notes(self):
+        self.assertEqual(lifecycle.TREE_CAP, 500)
+        self.assertEqual(lifecycle.WATERFALL_CAP, 2000)
+        tree = self.vega("hermes-atp-lc-session-tree")
+        (fetched,) = [d for d in tree["data"] if d["name"] == "fetched"]
+        self.assertEqual(fetched["url"]["body"]["aggs"]["sessions"]["terms"]["size"], 501, "cap + 1 to detect overflow")
+        (sessions,) = [d for d in tree["data"] if d["name"] == "sessions"]
+        self.assertEqual(sessions["source"], "fetched")
+        self.assertIn({"type": "filter", "expr": "datum.bucket_n <= 500"}, sessions["transform"])
+        self.assertIn({"name": "overCap", "update": "length(data('fetched')) > 500"}, tree["signals"])
+        (note,) = [m for m in tree["marks"] if m.get("name") == "overflow"]
+        self.assertEqual(note["encode"]["update"]["text"]["signal"],
+                         "overCap ? 'showing first 500 sessions — narrow the range or pick a session' : ''")
+        wf = self.vega("hermes-atp-lc-waterfall")
+        self.assertEqual(wf["data"]["url"]["body"]["size"], 2000)
+        tf = {t.get("as"): t["calculate"] for t in wf["transform"] if "calculate" in t}
+        self.assertEqual(tf["n_hits"], "length(datum.hits.hits)")
+        self.assertIn("datum.hits.total.value", tf["n_total"])
+        notes = wf["layer"][1]
+        calc = {t["as"]: t["calculate"] for t in notes["transform"] if "calculate" in t}
+        self.assertIn("datum.n_total > datum.n_hits ? 'showing first '", calc["cap_note"])
+        self.assertIn("records — narrow the range or pick a session'", calc["cap_note"])
+        self.assertEqual({l["encoding"]["text"]["field"] for l in notes["layer"]}, {"cap_note", "empty_note"})
+        readme = read("README.md")
+        self.assertIn("**500 sessions**", readme)
+        self.assertIn("**2,000 records**", readme)
+        self.assertIn("narrow the range or pick a session", readme)
+
+    def test_waterfall_empty_range_says_so(self):
+        wf = self.vega("hermes-atp-lc-waterfall")
+        tf = {t.get("as"): t["calculate"] for t in wf["transform"] if "calculate" in t}
+        self.assertEqual(tf["hit_list"], "datum.n_hits ? datum.hits.hits : [null]", "placeholder row keeps the note")
+        calc = {t["as"]: t["calculate"] for t in wf["layer"][1]["transform"] if "calculate" in t}
+        self.assertEqual(calc["empty_note"], "datum.n_hits === 0 ? 'No steps in this range' : ''")
+
+    def test_failed_steps_stand_out_in_the_waterfall(self):
+        wf = self.vega("hermes-atp-lc-waterfall")
+        steps = wf["layer"][0]
+        self.assertIn({"calculate": lifecycle.FAILED_EXPR, "as": "failed"}, steps["transform"])
+        for part in ("'api_request_error'", "datum.status !== 'ok'", "error_type"):
+            self.assertIn(part, lifecycle.FAILED_EXPR)
+        bars, _diamonds, ring = steps["layer"]
+        self.assertEqual(bars["encoding"]["stroke"], {"condition": {"test": "datum.failed", "value": "#d92d20"},
+                                                      "value": None})
+        self.assertEqual(ring["transform"], [{"filter": "datum.failed && !datum.is_pre"}])
+        self.assertEqual(ring["encoding"]["color"], {"value": "#d92d20"})
+        self.assertEqual(ring["encoding"]["shape"]["scale"]["domain"], ["failed step"], "legend entry")
+        # same definition as the tree's red ring and the Failed steps tile
+        should = lifecycle.ERROR_FILTER["bool"]["should"]
+        self.assertIn({"exists": {"field": "error_type"}}, should)
+        self.assertIn({"term": {"event": "api_request_error"}}, should)
+        self.assertIn("error_type : *", lifecycle.ERROR_KQL)
+        tree = self.vega("hermes-atp-lc-session-tree")
+        self.assertIn('"errors": {"filter": ' + json.dumps(lifecycle.ERROR_FILTER), json.dumps(tree))
 
     def test_fixture_sessions_get_distinct_labels(self):
         """Real-recorder session ids (fake-Hermes harness + a real-Hermes run's shapes)."""
@@ -586,7 +643,7 @@ class LifecycleDashboardTests(unittest.TestCase):
         events = {doc["event"] for doc in docs}
         self.assertTrue({"pre_api_request", "post_api_request", "pre_tool_call", "post_tool_call"} <= events)
         wf = self.vega("hermes-atp-lc-waterfall")
-        self.assertLessEqual(set(wf["encoding"]["color"]["scale"]["domain"]) - {"started, no completion"},
+        self.assertLessEqual(set(wf["layer"][0]["encoding"]["color"]["scale"]["domain"]) - {"started, no completion"},
                              set(build_document_events()))
         self.assertIn("api_request_error", build_document_events())
         by_session = {}

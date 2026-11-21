@@ -315,8 +315,9 @@ Basic-license Kibana (Lens, Vega/Vega-Lite, controls, Discover). It opens on the
   range to the request. Picking only the parent shows only the parent: a child session's
   records don't carry the parent's id, only its first record does (see below).
 * **Tiles:** tokens (`tokens.total`), elapsed (first → last record), model time
-  (`api_duration_ms`), tool time (`duration_ms`), failed steps (`api_request_error`, plus
-  `post_tool_call` whose `status` isn't `ok`), retries (`pre_api_request` with
+  (`api_duration_ms`), tool time (`duration_ms`), failed steps (`api_request_error`,
+  `post_tool_call` whose `status` isn't `ok`, or any record with an `error_type`; the tree's
+  red ring and the waterfall's red marker use the same test), retries (`pre_api_request` with
   `retry_count > 0`) and the ingest-verify pass rate (`verify.valid`).
 * **Session labels** (tree and waterfall): role plus the last 6 characters of the session id,
   e.g. `parent · …demo-1`, `sub · …d7e34b`, `sub² · …aa11bb` (a subagent's subagent), up to
@@ -332,7 +333,9 @@ Basic-license Kibana (Lens, Vega/Vega-Lite, controls, Discover). It opens on the
   error). The bar ends at the completion record's `@timestamp` and is `duration_ms` /
   `api_duration_ms` long. Rows are sessions in start order, then `seq`. An orange diamond is a
   step that started (`pre_*`) but has no completion record (still running, or the host
-  crashed). Hover for tool/model, status, tokens and verify status.
+  crashed). A failed step has a red outline and a red ring at its end (legend: *failed step*),
+  like the tree's red ring. A range with no records shows "No steps in this range". Hover for
+  tool/model, status, tokens and verify status.
 * **Steps** (saved Discover session): one row per record, sorted `session_id` then `seq`, with
   `seq`, `event`, `tool_name`, `model`, `status`, `duration_ms`, `api_duration_ms`,
   `tokens.total` and `verify.status`, so each session reads top to bottom like a transcript.
@@ -341,8 +344,13 @@ Basic-license Kibana (Lens, Vega/Vega-Lite, controls, Discover). It opens on the
 Limits of what the records can show:
 * Recorder timestamps are whole UTC seconds, so waterfall bars are placed to the second;
   `seq` (and the log line) gives the exact order within a session.
-* The waterfall reads up to 2,000 records and the tree up to 500 sessions per view. Over a
-  long time range bars get very thin: pick a session or zoom the time range.
+* **Caps:** the tree shows up to **500 sessions** (earliest first) and the waterfall reads up
+  to **2,000 records** (oldest first) per view. When a cap is hit the panel says so in orange
+  at its top right, e.g. "showing first 500 sessions — narrow the range or pick a session" or
+  "showing first 2,000 of 7,345 records — …" (the tree asks Elasticsearch for 501 sessions; the
+  waterfall compares `hits.total`, exact up to 10,000, shown as "10,000+" beyond). Everything
+  past the cap is simply not drawn; the tiles and the Steps table are not capped. Over a long
+  time range bars also get very thin: pick a session or zoom the time range.
 * Hiding a child's first record (for example with an **Event** filter that excludes
   `pre_api_request`) drops its parent link, so the child shows at the top level.
 

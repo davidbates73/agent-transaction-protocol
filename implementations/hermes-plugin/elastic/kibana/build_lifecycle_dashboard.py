@@ -50,12 +50,25 @@ def compact(obj) -> str:
 
 
 # --- shared ES query fragments ---------------------------------------------------------------
-# A failed step: an API error record, or a completed tool call whose status is not "ok".
+# A failed step: an API error record, a completed tool call whose status is not "ok", or any
+# record with an error_type. The tiles, the tree's red ring and the waterfall's red marker all
+# use this one definition (FAILED_EXPR is the same test on a waterfall row).
 ERROR_FILTER = {"bool": {"should": [
     {"term": {"event": "api_request_error"}},
     {"bool": {"filter": [{"term": {"event": "post_tool_call"}}], "must_not": [{"term": {"status": "ok"}}]}},
+    {"exists": {"field": "error_type"}},
 ], "minimum_should_match": 1}}
-ERROR_KQL = 'event : "api_request_error" or (event : "post_tool_call" and not status : "ok")'
+ERROR_KQL = ('event : "api_request_error" or (event : "post_tool_call" and not status : "ok") '
+             'or error_type : *')
+FAILED_EXPR = ("datum.event === 'api_request_error' || (datum.event === 'post_tool_call' && datum.status !== 'ok')"
+               " || isValid(datum.hit._source.error_type)")
+FAILED_COLOR = "#d92d20"
+
+# Per-view caps. Over a cap the panel says so ("showing first N — narrow the range or pick a
+# session") instead of silently dropping data.
+TREE_CAP = 500        # sessions in the session tree (terms buckets)
+WATERFALL_CAP = 2000  # records read by the waterfall (search hits)
+OVERFLOW_HINT = "narrow the range or pick a session"
 # A retry: an API attempt Hermes made after a failed one (retry_count is the attempt's index).
 RETRY_KQL = 'event : "pre_api_request" and retry_count > 0'
 
@@ -137,6 +150,7 @@ def session_tree_spec():
             {"name": "labelSpace", "update": "min(360, width * 0.45)"},
             {"name": "maxMs", "update": "length(data('shown')) ? extent(pluck(data('shown'), 'ms'))[1] : 0"},
             {"name": "maxTokens", "update": "length(data('shown')) ? extent(pluck(data('shown'), 'n_tokens'))[1] : 0"},
+            {"name": "overCap", "update": f"length(data('fetched')) > {TREE_CAP}"},
             {"name": "maxDepth", "update": "length(data('shown')) ? extent(pluck(data('shown'), 'depth'))[1] : 1"},
         ],
         "data": [
@@ -146,9 +160,10 @@ def session_tree_spec():
                               {"type": "formula", "as": "up", "expr": "datum._source.parent_session_id || null"}],
             },
             {
-                "name": "sessions",
+                # TREE_CAP + 1 buckets: the extra one only tells us the cap was hit.
+                "name": "fetched",
                 "url": es_url({"size": 0, "aggs": {"sessions": {
-                    "terms": {"field": "session_id", "size": 500, "order": {"first": "asc"}},
+                    "terms": {"field": "session_id", "size": TREE_CAP + 1, "order": {"first": "asc"}},
                     "aggs": {
                         "first": {"min": {"field": "@timestamp"}},
                         "last": {"max": {"field": "@timestamp"}},
@@ -165,7 +180,12 @@ def session_tree_spec():
                                 "parent_session_id", "parent_turn_id", "parent_subagent_id", "task_id"]}}}}},
                     }}}}),
                 "format": {"property": "aggregations.sessions.buckets"},
+            },
+            {
+                "name": "sessions", "source": "fetched",
                 "transform": [
+                    {"type": "window", "ops": ["row_number"], "as": ["bucket_n"]},
+                    {"type": "filter", "expr": f"datum.bucket_n <= {TREE_CAP}"},
                     {"type": "formula", "as": "id", "expr": "datum.key"},
                     {"type": "formula", "as": "link",
                      "expr": "datum.start.doc.hits.hits.length ? datum.start.doc.hits.hits[0]._source : {}"},
@@ -273,6 +293,10 @@ def session_tree_spec():
                 "x": {"signal": "width / 2"}, "y": {"signal": "height / 2"}, "align": {"value": "center"},
                 "fill": {"value": "#667085"}, "fontSize": {"value": 13},
                 "text": {"signal": "length(data('shown')) ? '' : 'No sessions in the selected time range / filters'"}}}},
+            {"type": "text", "name": "overflow", "encode": {"update": {
+                "x": {"signal": "width"}, "y": {"value": 0}, "align": {"value": "right"}, "baseline": {"value": "top"},
+                "fill": {"value": "#b54708"}, "fontSize": {"value": 12}, "fontWeight": {"value": "bold"},
+                "text": {"signal": f"overCap ? 'showing first {TREE_CAP} sessions — {OVERFLOW_HINT}' : ''"}}}},
         ],
     }
 
@@ -291,81 +315,134 @@ def waterfall_spec():
                        "error), ending at the completion record's @timestamp and as long as its duration_ms / "
                        "api_duration_ms. Rows: sessions in start order, then seq. A hollow diamond is a step "
                        "that started (pre_*) but has no completion record in range (still running or crashed). "
+                       "A failed step has a red outline and a red ring at its end, like the tree's red ring. "
                        "Recorder timestamps are whole seconds, so bars are placed to the second; seq gives the "
                        "exact order.",
         "autosize": {"type": "fit", "contains": "padding"},
         # One request: the steps (hits) plus, in a global aggregation that ignores the dashboard
         # filters but keeps the time range, the subagent links the role labels need.
-        "data": {"url": es_url({"size": 2000, "sort": [{"@timestamp": "asc"}, {"source.line": "asc"}, {"seq": "asc"}],
+        "data": {"url": es_url({"size": WATERFALL_CAP,
+                                "sort": [{"@timestamp": "asc"}, {"source.line": "asc"}, {"seq": "asc"}],
                                 "_source": WATERFALL_SOURCE, "aggs": {"links": LINKS_AGG}})},
         "transform": [
             {"calculate": "datum.aggregations.links.f.s.buckets", "as": "lb"},
             {"calculate": "pluck(datum.lb, 'key')", "as": "lk"},
             {"calculate": "pluck(datum.lb, 'p')", "as": "lp"},
-            {"flatten": ["hits.hits"], "as": ["hit"]},
-            {"calculate": f"{s}.session_id", "as": "session"},
-            {"filter": "isValid(datum.session)"},  # unparseable anomaly lines have no session
-            {"calculate": f"{s}.seq", "as": "seq"},
-            {"calculate": f"{s}.event", "as": "event"},
-            {"calculate": f"time(toDate({s}['@timestamp']))", "as": "end"},
-            {"calculate": f"{s}.duration_ms != null ? {s}.duration_ms : ({s}.api_duration_ms != null ? {s}.api_duration_ms : 0)",
-             "as": "dur"},
-            {"calculate": "datum.end - datum.dur", "as": "start"},
-            {"calculate": f"indexof(datum.event, 'tool') >= 0 ? 'tool' : 'model'", "as": "family"},
-            {"calculate": f"datum.family === 'tool' ? {s}.tool_call_id : {s}.api_request_id", "as": "step_id"},
-            {"calculate": "datum.session + '|' + datum.family + '|' + datum.step_id", "as": "pair"},
-            # Session order = first record's time, then its line in the log (timestamps are whole
-            # seconds, so a parent and the subagent it launched usually share a start second).
-            {"calculate": f"{s}.source ? {s}.source.line : 0", "as": "line"},
-            {"joinaggregate": [{"op": "min", "field": "end", "as": "session_start"},
-                               {"op": "min", "field": "line", "as": "session_line"}], "groupby": ["session"]},
-            {"joinaggregate": [{"op": "count", "as": "pair_n"}], "groupby": ["pair"]},
-            {"calculate": "indexof(datum.event, 'pre_') === 0", "as": "is_pre"},
-            # Completed steps become bars; a pre_* record is kept only when nothing completed it.
-            {"filter": "!datum.is_pre || datum.pair_n === 1 || !datum.step_id"},
-            {"calculate": "datum.is_pre ? 'started, no completion' : datum.event", "as": "kind"},
-            {"calculate": f"{s}.tool_name || {s}.model || ''", "as": "what"},
-            # Row key = zero-padded rank (session start, session, seq) + TAB + label: sorts as a plain
-            # string in every layer, and the axis shows only the label.
-            {"window": [{"op": "row_number", "as": "rank"}],
-             "sort": [{"field": "session_start"}, {"field": "session_line"}, {"field": "session"}, {"field": "seq"}]},
-            # role label: up to MAX_LABEL_DEPTH hops through the subagent links (same as the tree)
-            # role label: up to MAX_LABEL_DEPTH hops through the subagent links (same as the tree)
-            *[{"calculate": up_expr(f"datum.{src}"), "as": f"p{i + 1}"}
-              for i, src in enumerate(("session", "p1", "p2", "p3"))],
-            {"calculate": level_expr("datum.p1", "datum.p2", "datum.p3", "datum.p4"), "as": "level"},
-            {"calculate": "slice('00000' + datum.rank, -5) + '\\t' + " + label_expr("datum.session", "datum.level")
-                          + " + ' #' + datum.seq + '  ' + datum.what", "as": "row"},
-            {"calculate": f"{s}.status || ({s}.status_code ? 'HTTP ' + {s}.status_code : '')", "as": "status"},
-            {"calculate": f"{s}.tokens ? {s}.tokens.total : null", "as": "tokens"},
-            {"calculate": f"{s}.verify ? {s}.verify.status : ''", "as": "verify"},
+            # cap check: records matching vs records returned (hits.total is exact up to 10,000)
+            {"calculate": "length(datum.hits.hits)", "as": "n_hits"},
+            {"calculate": "isObject(datum.hits.total) ? datum.hits.total.value : datum.hits.total", "as": "n_total"},
+            {"calculate": "isObject(datum.hits.total) && datum.hits.total.relation === 'gte' ? 1 : 0",
+             "as": "total_gte"},
+            # an empty range keeps one placeholder row so the "No steps" note still has data
+            {"calculate": "datum.n_hits ? datum.hits.hits : [null]", "as": "hit_list"},
+            {"flatten": ["hit_list"], "as": ["hit"]},
         ],
-        "encoding": {
-            "y": {"field": "row", "type": "ordinal", "sort": "ascending",
-                  "axis": {"title": None, "labelLimit": 260, "labelFontSize": 10,
-                           "labelExpr": "split(datum.label, '\\t')[1]"}},
-            "color": {"field": "kind", "type": "nominal", "title": "step",
-                      "scale": {"domain": ["post_api_request", "post_tool_call", "api_request_error",
-                                           "started, no completion"],
-                                "range": ["#2e90fa", "#12b76a", "#d92d20", "#f79009"]},
-                      "legend": {"orient": "top"}},
-            "tooltip": [
-                {"field": "session", "title": "session"}, {"field": "seq", "title": "seq"},
-                {"field": "event", "title": "event"}, {"field": "what", "title": "tool / model"},
-                {"field": "status", "title": "status"}, {"field": "dur", "title": "duration ms"},
-                {"field": "tokens", "title": "tokens"}, {"field": "verify", "title": "verify"},
-                {"field": "end", "type": "temporal", "title": "recorded", "format": "%H:%M:%S"},
-            ],
-        },
         "layer": [
-            {"transform": [{"filter": "!datum.is_pre"}],
-             "mark": {"type": "bar", "cornerRadius": 2, "minBandSize": 2},
-             "encoding": {"x": {"field": "start", "type": "temporal", "title": None,
-                                "axis": {"format": "%H:%M:%S", "labelFontSize": 10}},
-                          "x2": {"field": "end"}}},
-            {"transform": [{"filter": "datum.is_pre"}],
-             "mark": {"type": "point", "shape": "diamond", "filled": False, "size": 80, "strokeWidth": 2},
-             "encoding": {"x": {"field": "end", "type": "temporal"}}},
+            {
+                "transform": [
+                    {"filter": "isValid(datum.hit)"},
+                    {"calculate": f"{s}.session_id", "as": "session"},
+                    {"filter": "isValid(datum.session)"},  # unparseable anomaly lines have no session
+                    {"calculate": f"{s}.seq", "as": "seq"},
+                    {"calculate": f"{s}.event", "as": "event"},
+                    {"calculate": f"time(toDate({s}['@timestamp']))", "as": "end"},
+                    {"calculate": f"{s}.duration_ms != null ? {s}.duration_ms : ({s}.api_duration_ms != null ? {s}.api_duration_ms : 0)",
+                     "as": "dur"},
+                    {"calculate": "datum.end - datum.dur", "as": "start"},
+                    {"calculate": f"indexof(datum.event, 'tool') >= 0 ? 'tool' : 'model'", "as": "family"},
+                    {"calculate": f"datum.family === 'tool' ? {s}.tool_call_id : {s}.api_request_id", "as": "step_id"},
+                    {"calculate": "datum.session + '|' + datum.family + '|' + datum.step_id", "as": "pair"},
+                    # Session order = first record's time, then its line in the log (timestamps are whole
+                    # seconds, so a parent and the subagent it launched usually share a start second).
+                    {"calculate": f"{s}.source ? {s}.source.line : 0", "as": "line"},
+                    {"joinaggregate": [{"op": "min", "field": "end", "as": "session_start"},
+                                       {"op": "min", "field": "line", "as": "session_line"}], "groupby": ["session"]},
+                    {"joinaggregate": [{"op": "count", "as": "pair_n"}], "groupby": ["pair"]},
+                    {"calculate": "indexof(datum.event, 'pre_') === 0", "as": "is_pre"},
+                    # Completed steps become bars; a pre_* record is kept only when nothing completed it.
+                    {"filter": "!datum.is_pre || datum.pair_n === 1 || !datum.step_id"},
+                    {"calculate": "datum.is_pre ? 'started, no completion' : datum.event", "as": "kind"},
+                    {"calculate": f"{s}.tool_name || {s}.model || ''", "as": "what"},
+                    # Row key = zero-padded rank (session start, session, seq) + TAB + label: sorts as a plain
+                    # string in every layer, and the axis shows only the label.
+                    {"window": [{"op": "row_number", "as": "rank"}],
+                     "sort": [{"field": "session_start"}, {"field": "session_line"}, {"field": "session"}, {"field": "seq"}]},
+                    # role label: up to MAX_LABEL_DEPTH hops through the subagent links (same as the tree)
+                    # role label: up to MAX_LABEL_DEPTH hops through the subagent links (same as the tree)
+                    *[{"calculate": up_expr(f"datum.{src}"), "as": f"p{i + 1}"}
+                      for i, src in enumerate(("session", "p1", "p2", "p3"))],
+                    {"calculate": level_expr("datum.p1", "datum.p2", "datum.p3", "datum.p4"), "as": "level"},
+                    {"calculate": "slice('00000' + datum.rank, -5) + '\\t' + " + label_expr("datum.session", "datum.level")
+                                  + " + ' #' + datum.seq + '  ' + datum.what", "as": "row"},
+                    {"calculate": f"{s}.status || ({s}.status_code ? 'HTTP ' + {s}.status_code : '')", "as": "status"},
+                    {"calculate": f"{s}.tokens ? {s}.tokens.total : null", "as": "tokens"},
+                    {"calculate": f"{s}.verify ? {s}.verify.status : ''", "as": "verify"},
+                    {"calculate": FAILED_EXPR, "as": "failed"},
+                    {"calculate": "datum.failed ? 'failed step' : 'ok'", "as": "outcome"},
+                ],
+                "encoding": {
+                    "y": {"field": "row", "type": "ordinal", "sort": "ascending",
+                          "axis": {"title": None, "labelLimit": 260, "labelFontSize": 10,
+                                   "labelExpr": "split(datum.label, '\\t')[1]"}},
+                    "color": {"field": "kind", "type": "nominal", "title": "step",
+                              "scale": {"domain": ["post_api_request", "post_tool_call", "api_request_error",
+                                                   "started, no completion"],
+                                        "range": ["#2e90fa", "#12b76a", "#d92d20", "#f79009"]},
+                              "legend": {"orient": "top"}},
+                    "tooltip": [
+                        {"field": "session", "title": "session"}, {"field": "seq", "title": "seq"},
+                        {"field": "event", "title": "event"}, {"field": "what", "title": "tool / model"},
+                        {"field": "status", "title": "status"}, {"field": "dur", "title": "duration ms"},
+                        {"field": "tokens", "title": "tokens"}, {"field": "verify", "title": "verify"},
+                        {"field": "end", "type": "temporal", "title": "recorded", "format": "%H:%M:%S"},
+                    ],
+                },
+                "layer": [
+                    # bars: a failed step gets a red outline (an api_request_error bar is red already)
+                    {"transform": [{"filter": "!datum.is_pre"}],
+                     "mark": {"type": "bar", "cornerRadius": 2, "minBandSize": 2},
+                     "encoding": {"x": {"field": "start", "type": "temporal", "title": None,
+                                        "axis": {"format": "%H:%M:%S", "labelFontSize": 10}},
+                                  "x2": {"field": "end"},
+                                  "stroke": {"condition": {"test": "datum.failed", "value": FAILED_COLOR},
+                                             "value": None},
+                                  "strokeWidth": {"condition": {"test": "datum.failed", "value": 2}, "value": 0}}},
+                    {"transform": [{"filter": "datum.is_pre"}],
+                     "mark": {"type": "point", "shape": "diamond", "filled": False, "size": 80, "strokeWidth": 2},
+                     "encoding": {"x": {"field": "end", "type": "temporal"}}},
+                    # failed steps: red ring at the step's end, like the tree's red ring; own legend entry
+                    {"transform": [{"filter": "datum.failed && !datum.is_pre"}],
+                     "mark": {"type": "point", "shape": "circle", "filled": False, "size": 110, "strokeWidth": 2.5},
+                     "encoding": {"x": {"field": "end", "type": "temporal"},
+                                  "color": {"value": FAILED_COLOR},
+                                  "shape": {"field": "outcome", "type": "nominal", "title": None,
+                                            "scale": {"domain": ["failed step"], "range": ["circle"]},
+                                            "legend": {"orient": "top", "symbolStrokeColor": FAILED_COLOR,
+                                                       "symbolStrokeWidth": 2.5}}}},
+                ],
+            },
+            # notes: one row (max over the rows), drawn only when there's something to say
+            {
+                "transform": [
+                    {"aggregate": [{"op": "max", "field": "n_hits", "as": "n_hits"},
+                                   {"op": "max", "field": "n_total", "as": "n_total"},
+                                   {"op": "max", "field": "total_gte", "as": "total_gte"}]},
+                    {"calculate": "datum.n_hits === 0 ? 'No steps in this range' : ''", "as": "empty_note"},
+                    {"calculate": "datum.n_total > datum.n_hits ? 'showing first ' + format(datum.n_hits, ',') + ' of '"
+                                  " + format(datum.n_total, ',') + (datum.total_gte ? '+' : '') + ' records — " + OVERFLOW_HINT + "'"
+                                  " : ''", "as": "cap_note"},
+                ],
+                "layer": [
+                    {"mark": {"type": "text", "fontSize": 13, "color": "#667085", "align": "center",
+                              "baseline": "middle"},
+                     "encoding": {"text": {"field": "empty_note"}, "x": {"value": {"expr": "width / 2"}},
+                                  "y": {"value": {"expr": "height / 2"}}}},
+                    {"mark": {"type": "text", "fontSize": 12, "fontWeight": "bold", "color": "#b54708",
+                              "align": "right", "baseline": "bottom"},
+                     "encoding": {"text": {"field": "cap_note"}, "x": {"value": {"expr": "width"}},
+                                  "y": {"value": -4}}},
+                ],
+            },
         ],
     }
 
@@ -499,7 +576,8 @@ TREE = vega_vis("hermes-atp-lc-session-tree", "Session tree (parent → subagent
                 "parent_subagent_id in the tooltip). Size = tokens, colour = model + tool ms, red ring = a "
                 "failed step, dashed = parent outside the current selection.")
 WATERFALL = vega_vis("hermes-atp-lc-waterfall", "Step waterfall", waterfall_spec(),
-                     "Vega-Lite. One bar per completed model/tool step, rows by session start then seq.")
+                     "Vega-Lite. One bar per completed model/tool step, rows by session start then seq. "
+                     "Red outline + ring = a failed step.")
 STEPS = step_table()
 TILES = tiles()
 
