@@ -405,6 +405,8 @@ class LifecycleDashboardTests(unittest.TestCase):
             urls = es_urls(self.vega(oid))
             self.assertTrue(urls, oid)
             for u in urls:
+                if u is lifecycle.LINKS_URL or u == lifecycle.LINKS_URL:
+                    continue  # label links: time range only, checked in test_session_labels
                 self.assertIs(u["%context%"], True, f"{oid}: dashboard query/filters/controls must apply")
                 self.assertEqual(u["%timefield%"], "@timestamp", f"{oid}: dashboard time range must apply")
                 self.assertEqual(u["index"], TEMPLATE["index_patterns"][0])
@@ -416,7 +418,7 @@ class LifecycleDashboardTests(unittest.TestCase):
     def test_session_tree_uses_the_recorder_links(self):
         spec = self.vega("hermes-atp-lc-session-tree")
         self.assertEqual(spec["$schema"], "https://vega.github.io/schema/vega/v5.json")
-        (u,) = es_urls(spec)
+        (u,) = [x for x in es_urls(spec) if x != lifecycle.LINKS_URL]
         fields = es_fields(u["body"])
         for f in ("session_id", "parent_session_id", "parent_turn_id", "parent_subagent_id", "is_session_start",
                   "tokens.total", "api_duration_ms", "duration_ms", "model"):
@@ -434,7 +436,9 @@ class LifecycleDashboardTests(unittest.TestCase):
         spec = self.vega("hermes-atp-lc-waterfall")
         self.assertEqual(spec["$schema"], "https://vega.github.io/schema/vega-lite/v5.json")
         (u,) = es_urls(spec)
-        self.assertEqual(spec["data"]["format"]["property"], "hits.hits")
+        self.assertNotIn("format", spec["data"], "whole response: hits plus the label-links aggregation")
+        flat_ = [t for t in spec["transform"] if "flatten" in t]
+        self.assertEqual(flat_, [{"flatten": ["hits.hits"], "as": ["hit"]}])
         src = set(u["body"]["_source"])
         for f in ("@timestamp", "session_id", "seq", "event", "duration_ms", "api_duration_ms", "tool_name", "model",
                   "status", "tokens.total", "tool_call_id", "api_request_id"):
@@ -446,6 +450,57 @@ class LifecycleDashboardTests(unittest.TestCase):
         self.assertTrue({"tool / model", "status", "tokens", "duration ms"} <= tips)
         self.assertEqual(set(spec["encoding"]["color"]["scale"]["domain"]) - {"started, no completion"},
                          {"post_api_request", "post_tool_call", "api_request_error"})
+
+    def test_session_labels(self):
+        tree = self.vega("hermes-atp-lc-session-tree")
+        wf = self.vega("hermes-atp-lc-waterfall")
+        tree_text = json.dumps(tree, ensure_ascii=False)
+        wf_text = json.dumps(wf, ensure_ascii=False)
+        self.assertIn(json.dumps(lifecycle.label_expr("datum.id", "datum.level"), ensure_ascii=False), tree_text)
+        self.assertIn(json.dumps(lifecycle.label_expr("datum.session", "datum.level"), ensure_ascii=False)[1:-1],
+                      wf_text)
+        (label_mark,) = [m for m in tree["marks"] if m["type"] == "text" and m.get("from")]
+        self.assertTrue(label_mark["encode"]["update"]["text"]["signal"].startswith("datum.label"))
+        for spec_text in (tree_text, wf_text):
+            self.assertNotIn("slice(datum.id, -14)", spec_text)
+            self.assertNotIn("slice(datum.session, -12)", spec_text)
+        # the full id stays in the tooltips
+        self.assertIn("'session': datum.id", tree_text)
+        self.assertIn({"field": "session", "title": "session"}, wf["encoding"]["tooltip"])
+        # links for the labels: subagent first records in the time range, NOT the dashboard filters
+        links = [d for d in tree["data"] if d["name"] == "linkdocs"][0]["url"]
+        self.assertEqual(links, lifecycle.LINKS_URL)
+        self.assertNotIn("%context%", links)
+        self.assertIn({"range": {"@timestamp": {"%timefilter%": True}}}, links["body"]["query"]["bool"]["filter"])
+        agg = wf["data"]["url"]["body"]["aggs"]["links"]
+        self.assertEqual(agg["global"], {})
+        self.assertEqual(agg["aggs"]["f"]["filter"], lifecycle.LINKS_BODY["query"])
+        # role levels: same number of hops in both specs
+        self.assertEqual([t["as"] for t in wf["transform"] if re.fullmatch(r"p\d", str(t.get("as", "")))],
+                         ["p1", "p2", "p3", "p4"])
+        self.assertEqual(sum(1 for d in tree["data"] for t in d.get("transform", []) if t["type"] == "lookup"
+                             and t["from"] == "linkdocs"), lifecycle.MAX_LABEL_DEPTH)
+
+    def test_fixture_sessions_get_distinct_labels(self):
+        """Real-recorder session ids (fake-Hermes harness + a real-Hermes run's shapes)."""
+        parents = {"sess-child": "sess-main", "sess-grandchild": "sess-child",
+                   "20261120_203515_d7e34b": "req-demo-1", "20261120_203515_4b0023": "req-demo-1",
+                   "20261120_203600_aa11bb": "20261120_203515_d7e34b",
+                   "20261120_203601_cc22dd": "20261120_203600_aa11bb",
+                   "20261120_203602_ee33ff": "20261120_203601_cc22dd"}
+        sessions = sorted(set(parents) | set(parents.values()) | {"sess-crash", "req-demo-2"})
+        labels = {sid: lifecycle.session_label(sid, parents) for sid in sessions}
+        self.assertEqual(len(set(labels.values())), len(labels), labels)
+        self.assertEqual(labels["req-demo-1"], "parent · …demo-1")
+        self.assertEqual(labels["20261120_203515_d7e34b"], "sub · …d7e34b")
+        self.assertEqual(labels["20261120_203515_4b0023"], "sub · …4b0023")
+        self.assertEqual(labels["sess-grandchild"], "sub² · …dchild")
+        self.assertEqual(labels["20261120_203600_aa11bb"], "sub² · …aa11bb")
+        self.assertEqual(labels["20261120_203601_cc22dd"], "sub³ · …cc22dd")
+        self.assertEqual(labels["20261120_203602_ee33ff"], "sub⁴⁺ · …ee33ff")
+        self.assertEqual(lifecycle.session_label("abc", {}), "parent · abc")
+        cyc = lifecycle.session_label("a-loop-1", {"a-loop-1": "a-loop-2", "a-loop-2": "a-loop-1"})
+        self.assertEqual(cyc, "sub⁴⁺ · …loop-1", "a link cycle is capped, never loops")
 
     def test_step_table(self):
         a = self.by_id["hermes-atp-lifecycle-steps"]["attributes"]

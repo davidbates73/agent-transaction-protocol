@@ -318,6 +318,10 @@ Basic-license Kibana (Lens, Vega/Vega-Lite, controls, Discover). It opens on the
   (`api_duration_ms`), tool time (`duration_ms`), failed steps (`api_request_error`, plus
   `post_tool_call` whose `status` isn't `ok`), retries (`pre_api_request` with
   `retry_count > 0`) and the ingest-verify pass rate (`verify.valid`).
+* **Session labels** (tree and waterfall): role plus the last 6 characters of the session id,
+  e.g. `parent · …demo-1`, `sub · …d7e34b`, `sub² · …aa11bb` (a subagent's subagent), up to
+  `sub⁴⁺`. The role comes from the subagent links in the time range, not from the dashboard
+  filters, so a session keeps its label when you filter down to it. Hover for the full id.
 * **Session tree** (Vega): one node per session, parent on the left, subagents to the right
   (a grandchild goes one level further). The link comes from the child session's **first
   record** (`seq` 0), which carries `parent_session_id` plus `parent_turn_id` /

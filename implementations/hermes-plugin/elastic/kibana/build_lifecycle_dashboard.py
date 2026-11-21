@@ -64,12 +64,67 @@ def es_url(body):
     return {"%context%": True, "%timefield%": "@timestamp", "index": INDEX, "body": body}
 
 
+# --- session labels (shared by the tree and the waterfall) -------------------------------------
+# A label is "<role> · …<last 6 chars of session_id>": role "parent" for a top-level session,
+# "sub" for a subagent, "sub²" / "sub³" for nested ones, "sub⁴⁺" deeper. The role comes from the
+# parent_session_id links in the time range, NOT from the dashboard filters, so a session keeps
+# its label when you filter down to it. The full session id is in every tooltip.
+LABEL_TAIL = 6
+MAX_LABEL_DEPTH = 4
+ROLE_SUFFIX = ["", "²", "³", "⁴⁺"]
+# Links for the labels: every subagent session's first record (it carries parent_session_id).
+# Time range only (no %context%), so dashboard filters don't change a session's label.
+LINKS_BODY = {"size": 10000, "_source": ["session_id", "parent_session_id"],
+              "query": {"bool": {"filter": [
+                  {"term": {"is_session_start": True}}, {"exists": {"field": "parent_session_id"}},
+                  {"range": {"@timestamp": {"%timefilter%": True}}}]}}}
+LINKS_URL = {"index": INDEX, "body": LINKS_BODY}
+# The same links as an aggregation (for the Vega-Lite waterfall, which can take only one ES
+# request): global (escapes the dashboard query/filters), then the time range, then child -> parent.
+LINKS_AGG = {"global": {}, "aggs": {"f": {"filter": LINKS_BODY["query"], "aggs": {"s": {
+    "terms": {"field": "session_id", "size": 10000},
+    "aggs": {"p": {"terms": {"field": "parent_session_id", "size": 1}}}}}}}}
+
+
+def up_expr(sid: str) -> str:
+    """Vega expression: the parent of session `sid` from the flattened links (lk keys, lp parents)."""
+    i = f"indexof(datum.lk, {sid})"
+    return f"({sid} && {i} >= 0 && datum.lp[{i}].buckets.length ? datum.lp[{i}].buckets[0].key : null)"
+
+
+def role_expr(level: str) -> str:
+    """Vega expression: role for a session with `level` known ancestors."""
+    return (f"({level} === 0 ? 'parent' : 'sub' + "
+            f"{json.dumps(ROLE_SUFFIX, ensure_ascii=False).replace(chr(34), chr(39))}[min({level}, {MAX_LABEL_DEPTH}) - 1])")
+
+
+def short_expr(sid: str) -> str:
+    return f"(length({sid}) > {LABEL_TAIL} ? '…' + slice({sid}, -{LABEL_TAIL}) : {sid})"
+
+
+def label_expr(sid: str, level: str) -> str:
+    return f"{role_expr(level)} + ' · ' + {short_expr(sid)}"
+
+
+def session_label(session_id: str, parents: dict) -> str:
+    """Python twin of label_expr (used by the tests): parents maps child -> parent session."""
+    level, cur = 0, session_id
+    while level < MAX_LABEL_DEPTH and parents.get(cur):
+        cur = parents[cur]
+        level += 1
+    role = "parent" if level == 0 else "sub" + ROLE_SUFFIX[level - 1]
+    tail = "…" + session_id[-LABEL_TAIL:] if len(session_id) > LABEL_TAIL else session_id
+    return f"{role} · {tail}"
+
+
+def level_expr(*ps: str) -> str:
+    return " + ".join(f"({p} ? 1 : 0)" for p in ps)
+
+
 # --- session tree (Vega) -----------------------------------------------------------------------
-SHORT_ID = "(length({f}) > 16 ? '…' + slice({f}, -14) : {f})"
 
 
 def session_tree_spec():
-    sid = SHORT_ID.format(f="datum.id")
     return {
         "$schema": "https://vega.github.io/schema/vega/v5.json",
         "description": "Hermes ATP session tree: each request's parent session with the subagent sessions it "
@@ -85,6 +140,11 @@ def session_tree_spec():
             {"name": "maxDepth", "update": "length(data('shown')) ? extent(pluck(data('shown'), 'depth'))[1] : 1"},
         ],
         "data": [
+            {
+                "name": "linkdocs", "url": LINKS_URL, "format": {"property": "hits.hits"},
+                "transform": [{"type": "formula", "as": "id", "expr": "datum._source.session_id"},
+                              {"type": "formula", "as": "up", "expr": "datum._source.parent_session_id || null"}],
+            },
             {
                 "name": "sessions",
                 "url": es_url({"size": 0, "aggs": {"sessions": {
@@ -119,6 +179,17 @@ def session_tree_spec():
                      "expr": "datum.model.buckets.length ? datum.model.buckets[0].key : ''"},
                     {"type": "formula", "as": "platform_name",
                      "expr": "datum.platform.buckets.length ? datum.platform.buckets[0].key : ''"},
+                    # ancestors for the role label: up to MAX_LABEL_DEPTH hops through the links
+                    {"type": "lookup", "from": "linkdocs", "key": "id", "fields": ["id"], "as": ["a0"]},
+                    {"type": "formula", "as": "p1", "expr": "datum.declared_parent || (datum.a0 ? datum.a0.up : null)"},
+                    {"type": "lookup", "from": "linkdocs", "key": "id", "fields": ["p1"], "as": ["a1"]},
+                    {"type": "formula", "as": "p2", "expr": "datum.a1 ? datum.a1.up : null"},
+                    {"type": "lookup", "from": "linkdocs", "key": "id", "fields": ["p2"], "as": ["a2"]},
+                    {"type": "formula", "as": "p3", "expr": "datum.a2 ? datum.a2.up : null"},
+                    {"type": "lookup", "from": "linkdocs", "key": "id", "fields": ["p3"], "as": ["a3"]},
+                    {"type": "formula", "as": "p4", "expr": "datum.a3 ? datum.a3.up : null"},
+                    {"type": "formula", "as": "level", "expr": level_expr("datum.p1", "datum.p2", "datum.p3", "datum.p4")},
+                    {"type": "formula", "as": "label", "expr": label_expr("datum.id", "datum.level")},
                 ],
             },
             {
@@ -195,9 +266,8 @@ def session_tree_spec():
                  "dy": [{"test": "datum.children > 0", "value": -14}, {"value": 0}],
                  "baseline": {"value": "middle"},
                  "fontSize": {"value": 11}, "fill": {"value": "#101828"}, "limit": {"signal": "labelSpace - 24"},
-                 "text": {"signal": sid + " + '  ' + (datum.platform_name === 'subagent' ? 'subagent' : "
-                                         "(datum.platform_name || 'session')) + ' · ' + (datum.model_name || 'no model') "
-                                         "+ ' · ' + format(datum.n_tokens, ',') + ' tok · ' + format(datum.ms, ',') + ' ms'"},
+                 "text": {"signal": "datum.label + '  ' + (datum.model_name || 'no model') "
+                                    "+ ' · ' + format(datum.n_tokens, ',') + ' tok · ' + format(datum.ms, ',') + ' ms'"},
              }}},
             {"type": "text", "encode": {"update": {
                 "x": {"signal": "width / 2"}, "y": {"signal": "height / 2"}, "align": {"value": "center"},
@@ -214,7 +284,7 @@ WATERFALL_SOURCE = ["@timestamp", "session_id", "seq", "event", "action_type", "
 
 
 def waterfall_spec():
-    s = "datum._source"
+    s = "datum.hit._source"
     return {
         "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
         "description": "Hermes ATP step waterfall: one bar per completed step (model call, tool call, API "
@@ -224,10 +294,15 @@ def waterfall_spec():
                        "Recorder timestamps are whole seconds, so bars are placed to the second; seq gives the "
                        "exact order.",
         "autosize": {"type": "fit", "contains": "padding"},
+        # One request: the steps (hits) plus, in a global aggregation that ignores the dashboard
+        # filters but keeps the time range, the subagent links the role labels need.
         "data": {"url": es_url({"size": 2000, "sort": [{"@timestamp": "asc"}, {"source.line": "asc"}, {"seq": "asc"}],
-                                "_source": WATERFALL_SOURCE}),
-                 "format": {"property": "hits.hits"}},
+                                "_source": WATERFALL_SOURCE, "aggs": {"links": LINKS_AGG}})},
         "transform": [
+            {"calculate": "datum.aggregations.links.f.s.buckets", "as": "lb"},
+            {"calculate": "pluck(datum.lb, 'key')", "as": "lk"},
+            {"calculate": "pluck(datum.lb, 'p')", "as": "lp"},
+            {"flatten": ["hits.hits"], "as": ["hit"]},
             {"calculate": f"{s}.session_id", "as": "session"},
             {"filter": "isValid(datum.session)"},  # unparseable anomaly lines have no session
             {"calculate": f"{s}.seq", "as": "seq"},
@@ -254,9 +329,13 @@ def waterfall_spec():
             # string in every layer, and the axis shows only the label.
             {"window": [{"op": "row_number", "as": "rank"}],
              "sort": [{"field": "session_start"}, {"field": "session_line"}, {"field": "session"}, {"field": "seq"}]},
-            {"calculate": "slice('00000' + datum.rank, -5) + '\\t' + "
-                          "(length(datum.session) > 16 ? '…' + slice(datum.session, -12) : datum.session) + "
-                          "' #' + datum.seq + '  ' + datum.what", "as": "row"},
+            # role label: up to MAX_LABEL_DEPTH hops through the subagent links (same as the tree)
+            # role label: up to MAX_LABEL_DEPTH hops through the subagent links (same as the tree)
+            *[{"calculate": up_expr(f"datum.{src}"), "as": f"p{i + 1}"}
+              for i, src in enumerate(("session", "p1", "p2", "p3"))],
+            {"calculate": level_expr("datum.p1", "datum.p2", "datum.p3", "datum.p4"), "as": "level"},
+            {"calculate": "slice('00000' + datum.rank, -5) + '\\t' + " + label_expr("datum.session", "datum.level")
+                          + " + ' #' + datum.seq + '  ' + datum.what", "as": "row"},
             {"calculate": f"{s}.status || ({s}.status_code ? 'HTTP ' + {s}.status_code : '')", "as": "status"},
             {"calculate": f"{s}.tokens ? {s}.tokens.total : null", "as": "tokens"},
             {"calculate": f"{s}.verify ? {s}.verify.status : ''", "as": "verify"},
