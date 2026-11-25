@@ -248,13 +248,18 @@ The exporter therefore stamps every document that has a `session_id` with
 
 **Backfill / restamp (existing indices).** The index template only applies to indices
 created after it, and the exporter only creates documents. For indices written before
-`root_session_id` existed:
+`root_session_id` existed, run these on us-solebay from this directory. Elasticsearch listens
+only on the LAN IP (`ES_BIND_ADDR`), not on localhost, so use that address. Each prompts for
+the `elastic` password (or reads `HERMES_ES_PASSWORD` / `--password-file`). Preview first:
 
 ```sh
-# on us-solebay, from this directory (prompts for the elastic password; or set
-# HERMES_ES_PASSWORD / --password-file)
-python3 exporter/hermes_atp_restamp.py --es-url https://localhost:9200 --ca-cert certs/ca/ca.crt --dry-run
-python3 exporter/hermes_atp_restamp.py --es-url https://localhost:9200 --ca-cert certs/ca/ca.crt
+python3 exporter/hermes_atp_restamp.py --es-url https://<SOLEBAY_IP>:9200 --ca-cert certs/ca/ca.crt --dry-run
+```
+
+Then apply:
+
+```sh
+python3 exporter/hermes_atp_restamp.py --es-url https://<SOLEBAY_IP>:9200 --ca-cert certs/ca/ca.crt
 ```
 
 It (1) adds `root_session_id` to the mapping of every existing `hermes-atp-records-*` index
@@ -264,9 +269,9 @@ documents whose `root_session_id` is missing or wrong. A second run changes noth
 for one request whose sessions you know:
 
 ```sh
-curl --cacert certs/ca/ca.crt -u elastic -X PUT "https://localhost:9200/hermes-atp-records-*/_mapping" \
+curl --cacert certs/ca/ca.crt -u elastic -X PUT "https://<SOLEBAY_IP>:9200/hermes-atp-records-*/_mapping" \
   -H 'Content-Type: application/json' -d '{"properties":{"root_session_id":{"type":"keyword","ignore_above":1024}}}'
-curl --cacert certs/ca/ca.crt -u elastic -X POST "https://localhost:9200/hermes-atp-records-*/_update_by_query?conflicts=proceed&refresh=true" \
+curl --cacert certs/ca/ca.crt -u elastic -X POST "https://<SOLEBAY_IP>:9200/hermes-atp-records-*/_update_by_query?conflicts=proceed&refresh=true" \
   -H 'Content-Type: application/json' -d '{"query":{"terms":{"session_id":["<parent>","<child>","<grandchild>"]}},
   "script":{"source":"ctx._source.root_session_id = params.root","params":{"root":"<parent>"}}}'
 ```

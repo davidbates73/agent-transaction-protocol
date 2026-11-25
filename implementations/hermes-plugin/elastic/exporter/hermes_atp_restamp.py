@@ -17,7 +17,8 @@ before root_session_id existed, and whenever the exporter logs that roots change
 shipping (then run `hermes_atp_export.py --restamp-done` on the exporter host).
 
 Usage:
-    hermes_atp_restamp.py --es-url https://localhost:9200 --ca-cert certs/ca/ca.crt [--dry-run]
+    hermes_atp_restamp.py --es-url https://<SOLEBAY_IP>:9200 --ca-cert certs/ca/ca.crt [--dry-run]
+(Elasticsearch on us-solebay listens only on the LAN IP, ES_BIND_ADDR, not on localhost.)
 The password is read from HERMES_ES_PASSWORD, --password-file, or prompted for.
 """
 
