@@ -139,6 +139,12 @@ Notes:
 * **Certificates:** to issue new ones (for example after changing `ES_PUBLIC_*`), run
   `rm -r certs/es01 certs/kibana && docker compose run --rm setup && docker compose restart es01 kibana`,
   then copy the CA to the exporter again if you also replaced `certs/ca`.
+* **Always up:** `es01` and `kibana` use `restart: unless-stopped` (the one-shot `setup` has
+  none), so they come back after a reboot as long as Docker starts at boot:
+  `sudo systemctl enable --now docker containerd`. A container you stopped by hand
+  (`docker compose stop`/`down`) stays stopped across reboots until `docker compose up -d`.
+  If they still don't come back, check `docker compose ps -a` and `docker compose logs es01`:
+  a common cause is `ES_BIND_ADDR` (the LAN IP) not being up yet when Docker starts.
 * **Data:** it lives in the `esdata` volume. `docker compose down` keeps it;
   `docker compose down -v` deletes it.
 * **Retention:** there's no automatic retention. Indices are monthly, so delete old ones with
