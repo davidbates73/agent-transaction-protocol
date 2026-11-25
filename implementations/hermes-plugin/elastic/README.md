@@ -145,6 +145,11 @@ Notes:
   (`docker compose stop`/`down`) stays stopped across reboots until `docker compose up -d`.
   If they still don't come back, check `docker compose ps -a` and `docker compose logs es01`:
   a common cause is `ES_BIND_ADDR` (the LAN IP) not being up yet when Docker starts.
+  Docker doesn't retry a failed port bind, so make Docker wait for the network with a drop-in
+  (`sudo systemctl edit docker`, add `[Unit]`, `Wants=network-online.target` and
+  `After=network-online.target`, then `sudo systemctl enable systemd-networkd-wait-online` or
+  `NetworkManager-wait-online`, whichever your host uses), or let the bind succeed early with
+  `net.ipv4.ip_nonlocal_bind=1` in `/etc/sysctl.d/`.
 * **Data:** it lives in the `esdata` volume. `docker compose down` keeps it;
   `docker compose down -v` deletes it.
 * **Retention:** there's no automatic retention. Indices are monthly, so delete old ones with
