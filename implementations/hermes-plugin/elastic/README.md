@@ -356,6 +356,64 @@ So a compromised NUC can append junk to these indices, but it can't erase or alt
 already been shipped. Anything forged shows up as a verify failure, and a forged copy can't
 replace a genuine record, because of the `_id` rule above.
 
+### Audit (read-only, on us-solebay)
+
+`exporter/hermes_atp_audit.py` checks that what's in Elasticsearch is complete and
+consistent. It only reads: every request is a GET, or a POST to `_search`, `_count` or
+`_search/scroll`, and the tool refuses anything else before it reaches the network. It prints
+PASS, WARN or FAIL with a short reason for each check, ids and counts only (no document
+bodies, no credentials), and exits 2 if any check FAILs (3 if Elasticsearch can't be reached).
+
+| Check | What it looks at |
+|---|---|
+| `cluster-health`, `index-health` | cluster status (yellow on one node is a WARN), status and shards of each `hermes-atp-records-*` index |
+| `doc-counts` | documents per index, per `event`, per `verify.status` (anomalies are a WARN) |
+| `duplicate-ids` | a `node_id` stored in more than one document |
+| `lifecycle` | `pre_*` with no `post_*`/`api_request_error` (WARN after `--pending-grace`, default 15m), a completion whose request is missing, a record whose ATP parent record is missing, a session with no `seq` 0, a subagent link to a parent session with no documents |
+| `root-session` | documents missing `root_session_id`, roots that name no session, roots that disagree with the links (fix with the restamp tool) |
+| `timestamps` | `@timestamp` in the future (beyond `--max-skew`, default 5m), a completion earlier than its request, `seq` out of time order, ingestion gaps over `--max-gap` (default 6h, WARN) in the last `--gap-lookback` (default 7d) |
+| `freshness` | newest `ingested_at` vs `--max-age` (default 30m); a WARN, since an idle Hermes looks the same as a stopped exporter (`--strict-freshness` makes it a FAIL) |
+| `expected-count` | with `--expected-count N`: total documents vs the exporter's shipped total (fewer is a FAIL) |
+
+Run it from this directory on us-solebay. Elasticsearch listens only on the LAN IP
+(`ES_BIND_ADDR`), not on localhost, so use that address. It prompts for the `elastic`
+password (or reads `HERMES_ES_PASSWORD` / `--password-file`):
+
+```sh
+python3 exporter/hermes_atp_audit.py --es-url https://<SOLEBAY_IP>:9200 --ca-cert certs/ca/ca.crt
+```
+
+To compare with the exporter's `shipped` total:
+
+```sh
+python3 exporter/hermes_atp_audit.py --es-url https://<SOLEBAY_IP>:9200 --ca-cert certs/ca/ca.crt --expected-count <SHIPPED_TOTAL>
+```
+
+Machine-readable output:
+
+```sh
+python3 exporter/hermes_atp_audit.py --es-url https://<SOLEBAY_IP>:9200 --ca-cert certs/ca/ca.crt --json
+```
+
+Example (clean data):
+
+```text
+PASS  cluster-health  green, 1 node(s)
+PASS  index-health    1 index(es), all green and open
+PASS  doc-counts      42 documents in 1 index(es), all verified at ingest
+PASS  duplicate-ids   42 distinct node_id(s), none repeated
+PASS  lifecycle       7 session(s): every request has its end, every parent record present
+PASS  root-session    all 42 document(s) carry root_session_id; 3 root(s), all consistent with the links
+PASS  timestamps      no future records, requests before their ends, seq in time order, no ingestion gap over 6h in the last 7d
+PASS  freshness       newest document ingested 19m ago (limit 30m)
+PASS  expected-count  42 documents, as expected
+summary: 9 pass, 0 warn, 0 fail -> PASS
+```
+
+The audit reads a slim copy of every document (ids, session fields, event, seq and times) with
+a scroll, so it holds them in memory; `--max-docs` (default 2,000,000) caps that. The cluster
+checks need the `monitor` cluster privilege, which `elastic` has and `hermes_viewer` doesn't.
+
 ## Copy mode (fallback)
 
 Use copy mode if you'd rather not let nuc-hermes reach Elasticsearch at all. The same
@@ -607,6 +665,11 @@ bash implementations/run-all.sh          # includes these suites
     restarts and being relearned when lost; forged links ignored; cycles and conflicting
     links; pruning `sessions.json` (`session_link_ttl_days`: ancestors of live sessions and
     sessions with unread records kept, maps from before pruning, rebuild after a prune).
+* `test_audit.py` runs `hermes_atp_audit.py` over documents the real recorder wrote and the
+  real exporter shipped, served by an in-memory fake of the read APIs. It covers every check's
+  PASS and its WARN/FAIL cases, scroll paging, every request being a read (writes refused before
+  the network), exit codes, `--json`, and no password, `Authorization` header or body in the
+  output.
 * `test_assets.py` checks:
   * the vendored `atp_log.py` is byte-identical;
   * every emitted field is mapped;
