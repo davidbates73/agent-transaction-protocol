@@ -196,7 +196,8 @@ def scan(client: ReadOnlyClient, index: str, max_docs: int) -> Tuple[List[dict],
 # checks
 # ---------------------------------------------------------------------------------------
 
-def check_cluster(client: ReadOnlyClient, index: str, res: Result) -> None:
+def check_cluster(client: ReadOnlyClient, index: str, res: Result, scanned: Optional[Dict[str, int]] = None) -> None:
+    """scanned: {index: documents} from the scan, the fallback when _cat/indices is refused."""
     try:
         h = client.get("/_cluster/health")
     except hx.FatalError as e:
@@ -226,7 +227,17 @@ def check_cluster(client: ReadOnlyClient, index: str, res: Result) -> None:
         cat = client.get(f"/_cat/indices/{index}?format=json&h=index,health,status,pri,rep,docs.count"
                          "&expand_wildcards=all")
     except hx.FatalError as e:
-        res.add("index-health", FAIL, f"cannot list {index} ({e})")
+        if "HTTP 403" not in str(e):
+            res.add("index-health", FAIL, f"cannot list {index} ({e})")
+            return
+        seen = dict(sorted((scanned or {}).items()))
+        if not seen:
+            res.add("index-health", WARN, f"cannot read index health: the user lacks the monitor privilege "
+                    f"(HTTP 403 on _cat/indices), and the scan found no {index} index")
+        else:
+            res.add("index-health", WARN, f"cannot read index health: the user lacks the monitor privilege "
+                    f"(HTTP 403 on _cat/indices); the scan read {len(seen)} index(es): {', '.join(seen)}",
+                    indices={k: {"documents": v} for k, v in seen.items()})
         return
     if not cat:
         res.add("index-health", FAIL, f"no index matches {index}")
@@ -514,8 +525,11 @@ def run(client, *, index_prefix: str = "hermes-atp", now: Optional[float] = None
     now = time.time() if now is None else now
     index = f"{index_prefix}-records-*"
     res = Result()
-    check_cluster(ro, index, res)
     docs, truncated = scan(ro, index, max_docs)
+    scanned: Dict[str, int] = {}
+    for d in docs:
+        scanned[d["_index"]] = scanned.get(d["_index"], 0) + 1
+    check_cluster(ro, index, res, scanned)
     total = check_counts(ro, index, docs, truncated, res, index_prefix)
     if docs:
         check_duplicates(docs, res)

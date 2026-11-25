@@ -58,12 +58,13 @@ def shipped_docs():
 class FakeAuditES:
     """Answers the audit's read requests from {(index, _id): doc}. Records every call."""
 
-    def __init__(self, docs, health="green", nodes=1, unassigned=0, health_status=200):
+    def __init__(self, docs, health="green", nodes=1, unassigned=0, health_status=200, cat_status=200):
         self.docs = docs
         self.calls = []
         self.health = {"status": health, "number_of_nodes": nodes, "unassigned_shards": unassigned,
                        "active_shards_percent_as_number": 100.0 if not unassigned else 50.0}
         self.health_status = health_status
+        self.cat_status = cat_status
         self.scrolls = {}
 
     def indices(self):
@@ -84,6 +85,8 @@ class FakeAuditES:
         if p.startswith("/_cluster/health/"):
             return {"indices": {i: {"status": "green", "unassigned_shards": 0} for i in self.indices()}}
         if p.startswith("/_cat/indices/"):
+            if self.cat_status in (401, 403):
+                raise hx.FatalError(f"Elasticsearch refused the credentials or privileges (HTTP {self.cat_status})")
             return [{"index": i, "health": "green", "status": "open", "pri": "1", "rep": "0",
                      "docs.count": str(sum(1 for x, _ in self.docs if x == i))} for i in self.indices()]
         if p.endswith("/_count"):
@@ -220,6 +223,30 @@ class ClusterHealthTests(AuditBase):
         c = by_name(self.audit(FakeAuditES(self.docs, health_status=403)))["cluster-health"]
         self.assertEqual(c["status"], "WARN")
         self.assertIn("monitor", c["reason"])
+
+
+    def test_viewer_without_monitor_warns_and_falls_back_to_scanned_indices(self):
+        res = self.audit(FakeAuditES(self.docs, health_status=403, cat_status=403), expected_count=len(self.docs))
+        c = by_name(res)
+        self.assertEqual(c["cluster-health"]["status"], "WARN")
+        self.assertEqual(c["index-health"]["status"], "WARN")
+        self.assertIn("monitor privilege", c["index-health"]["reason"])
+        want = sorted({i for i, _ in self.docs})
+        self.assertEqual(sorted(c["index-health"]["details"]["indices"]), want)
+        self.assertEqual(sum(v["documents"] for v in c["index-health"]["details"]["indices"].values()),
+                         len(self.docs))
+        self.assertEqual(res.worst(), "WARN", "every data check still passes: no FAIL, exit 0")
+        for name in ("doc-counts", "duplicate-ids", "lifecycle", "root-session", "timestamps", "freshness",
+                     "expected-count"):
+            self.assertEqual(c[name]["status"], "PASS", name)
+
+    def test_other_cat_errors_still_fail(self):
+        class Broken(FakeAuditES):
+            def request(self, method, path, body=None):
+                if path.startswith("/_cat/indices/"):
+                    raise hx.FatalError("GET /_cat/indices/x rejected (HTTP 400)")
+                return super().request(method, path, body)
+        self.assertEqual(by_name(self.audit(Broken(self.docs)))["index-health"]["status"], "FAIL")
 
 
 class DuplicateTests(AuditBase):
@@ -405,6 +432,30 @@ class CliTests(AuditBase):
         self.assertIn("Connection refused", err)
         self.assertNotIn(PASSWORD, out + err)
         self.assertTrue(made["auth"].startswith("Basic "))
+
+    def test_viewer_cli_exits_zero(self):
+        code, out, err, _ = self.cli(["--es-url", "https://es.example:9200", "--username", "hermes_viewer",
+                                      "--expected-count", str(len(self.docs))],
+                                     fake=FakeAuditES(self.docs, health_status=403, cat_status=403))
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("summary: 7 pass, 2 warn, 0 fail -> WARN", out)
+
+    def test_restamp_requires_es_url(self):
+        import hermes_atp_restamp as rs
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"HERMES_ES_PASSWORD": PASSWORD}, clear=True), redirect_stderr(err), \
+                mock.patch.object(rs.hx, "ESClient", side_effect=AssertionError("connected")), \
+                mock.patch("getpass.getpass", side_effect=AssertionError("prompted")):
+            self.assertEqual(rs.main([]), 1)
+        self.assertIn("--es-url is required", err.getvalue())
+        self.assertIn("binds only the LAN IP", err.getvalue())
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"HERMES_ES_PASSWORD": PASSWORD, "HERMES_ES_URL": "https://es.example:9200"},
+                             clear=True), redirect_stdout(out), \
+                mock.patch.object(rs, "run", return_value={"dry_run": True}) as run:
+            self.assertEqual(rs.main(["--dry-run"]), 0)
+        self.assertEqual(run.call_args.args[0].url, "https://es.example:9200", "HERMES_ES_URL is used")
+        self.assertNotIn(PASSWORD, out.getvalue())
 
     def test_real_client_refuses_writes(self):
         cfg = hx.Config(dict(hx.Config.DEFAULTS, es_url="https://127.0.0.1:1", username="elastic", password="x"))

@@ -122,7 +122,8 @@ def run(client, index_prefix: str, dry_run: bool = False) -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--es-url", default=os.environ.get("HERMES_ES_URL", "https://localhost:9200"))
+    ap.add_argument("--es-url", default=os.environ.get("HERMES_ES_URL"),
+                    help="e.g. https://<SOLEBAY_IP>:9200 (Elasticsearch binds only the LAN IP, not localhost)")
     ap.add_argument("--ca-cert", default=os.environ.get("HERMES_ES_CA_CERT"))
     ap.add_argument("--username", default=os.environ.get("HERMES_ES_USERNAME", "elastic"))
     ap.add_argument("--password-file", help="file holding the password (else HERMES_ES_PASSWORD, else a prompt)")
@@ -131,6 +132,10 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="report what would change; change nothing")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if not a.es_url:
+        print("hermes-atp-restamp: --es-url is required (e.g. https://<SOLEBAY_IP>:9200; Elasticsearch binds only "
+              "the LAN IP)", file=sys.stderr)
+        return 1
     if a.password_file:
         password = hx._read_secret_file(a.password_file)
     else:

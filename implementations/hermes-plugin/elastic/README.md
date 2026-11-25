@@ -266,11 +266,16 @@ It (1) adds `root_session_id` to the mapping of every existing `hermes-atp-recor
 (`docker compose run --rm setup` does that too), (2) reads the links from Elasticsearch,
 (3) works out the roots with the exporter's own code and (4) runs `_update_by_query` only for
 documents whose `root_session_id` is missing or wrong. A second run changes nothing. By hand,
-for one request whose sessions you know:
+for one request whose sessions you know, first add the field to the mapping:
 
 ```sh
 curl --cacert certs/ca/ca.crt -u elastic -X PUT "https://<SOLEBAY_IP>:9200/hermes-atp-records-*/_mapping" \
   -H 'Content-Type: application/json' -d '{"properties":{"root_session_id":{"type":"keyword","ignore_above":1024}}}'
+```
+
+Then stamp the sessions with their root:
+
+```sh
 curl --cacert certs/ca/ca.crt -u elastic -X POST "https://<SOLEBAY_IP>:9200/hermes-atp-records-*/_update_by_query?conflicts=proceed&refresh=true" \
   -H 'Content-Type: application/json' -d '{"query":{"terms":{"session_id":["<parent>","<child>","<grandchild>"]}},
   "script":{"source":"ctx._source.root_session_id = params.root","params":{"root":"<parent>"}}}'
@@ -417,7 +422,10 @@ summary: 9 pass, 0 warn, 0 fail -> PASS
 
 The audit reads a slim copy of every document (ids, session fields, event, seq and times) with
 a scroll, so it holds them in memory; `--max-docs` (default 2,000,000) caps that. The cluster
-checks need the `monitor` cluster privilege, which `elastic` has and `hermes_viewer` doesn't.
+checks need the `monitor` cluster privilege, which `elastic` has and `hermes_viewer` doesn't;
+without it `cluster-health` and `index-health` are a WARN and the data checks still run.
+`--es-url` (or `HERMES_ES_URL`) is required, for this tool and for `hermes_atp_restamp.py`.
+Documents become searchable only after an index refresh (`index.refresh_interval` is 5s in the template), so an audit run within a few seconds of the first ingest can report 0 docs; run it again.
 
 ## Copy mode (fallback)
 
